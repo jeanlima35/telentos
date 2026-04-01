@@ -1,0 +1,1546 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Banco de Talentos Pro</title>
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <!-- Babel for JSX compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Supabase JS -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- SheetJS for XLS -->
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <!-- jsPDF for PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+    <style>
+      body { margin: 0; padding: 0; font-family: sans-serif; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ─── CONEXÃO COM SUPABASE ───────────────────────────────────────────────────
+const SUPABASE_URL = 'https://vblqbgxwmjhfqkzcpnrh.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_JkUUK7Er8mL-YCabWPeMsg_LKsSBlku';
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+// ────────────────────────────────────────────────────────────────────────────
+
+const STATUS_CONFIG = {
+  "Aguardando": { color: "#f59e0b", bg: "rgba(245,158,11,0.15)" },
+  "Em análise": { color: "#3b82f6", bg: "rgba(59,130,246,0.15)" },
+  "Entrevista": { color: "#8b5cf6", bg: "rgba(139,92,246,0.15)" },
+  "Contratado": { color: "#10b981", bg: "rgba(16,185,129,0.15)" },
+  "Efetivo": { color: "#06b6d4", bg: "rgba(6,182,212,0.15)" },
+  "Encerrado": { color: "#6b7280", bg: "rgba(107,114,128,0.15)" },
+};
+const ALL_STATUSES = ["Aguardando", "Em análise", "Entrevista", "Contratado", "Efetivo", "Encerrado"];
+
+function slugify(text) {
+  return text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+const inputStyle = {
+  width: "100%", padding: "12px 14px", borderRadius: 10,
+  border: "1px solid var(--border)", background: "var(--bg3)",
+  color: "var(--text)", fontFamily: "'Outfit', sans-serif", fontSize: 14,
+  outline: "none", marginBottom: 14, boxSizing: "border-box", transition: "border-color 0.15s"
+};
+
+function Label({ children }) {
+  return <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "var(--text2)", marginBottom: 6 }}>{children}</label>;
+}
+
+function exportXLS(candidates, companyName) {
+  if (!window.XLSX) return alert("Biblioteca XLSX carregando, tente novamente.");
+  const data = candidates.map(c => ({ "Nome": c.name, "Email": c.email, "Telefone": c.phone || "", "Cargo": c.role, "Status": c.status }));
+  const worksheet = XLSX.utils.json_to_sheet(data);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Candidatos");
+  XLSX.writeFile(workbook, `candidatos_${companyName.replace(/\s+/g,"-").toLowerCase()}.xlsx`);
+}
+
+function exportPDF(candidates, companyName) {
+  if (!window.jspdf) return alert("Biblioteca jsPDF carregando, tente novamente.");
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  doc.text(`Candidatos - ${companyName}`, 14, 15);
+  const tableColumn = ["Nome", "Email", "Cargo", "Status"];
+  const tableRows = candidates.map(c => [c.name, c.email, c.role, c.status]);
+  doc.autoTable({ head: [tableColumn], body: tableRows, startY: 20 });
+  doc.save(`candidatos_${companyName.replace(/\s+/g,"-").toLowerCase()}.pdf`);
+}
+
+// ─── MAIN APP ───────────────────────────────────────────────────────────────
+function App() {
+  const [state, setState] = useState({
+    theme: "dark",
+    view: "landing",
+    currentUser: null,
+    currentCompany: null,
+    loading: true
+  });
+  
+  const [dashSection, setDashSection] = useState("dashboard");
+  const [publicSlug, setPublicSlug] = useState("techcorp-brasil");
+  const [notification, setNotification] = useState(null);
+  
+  const [companiesData, setCompaniesData] = useState([]);
+
+  // Fetch Session on Load
+  useEffect(() => {
+    const fetchSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        await fetchUserData(session.user);
+      } else {
+        setState(s => ({ ...s, loading: false }));
+      }
+    };
+    fetchSession();
+  }, []);
+
+  const fetchUserData = async (user) => {
+    // Buscar perfil do banco
+    const { data: profile } = await supabase.from('users').select('*').eq('id', user.id).single();
+    if (!profile) {
+      // Usuário autenticou, mas o perfil não foi criado (registro incompleto).
+      // Direcionamos ele para concluir o cadastro da empresa.
+      setState(s => ({ ...s, currentUser: null, view: 'register-company', loading: false }));
+      return;
+    }
+    
+    // Buscar empresa
+    const { data: company } = await supabase.from('companies').select('*, jobs(*), candidates(*, candidate_notes(*)), users(*)').eq('id', profile.company_id).single();
+    
+    setState(s => ({
+      ...s,
+      currentUser: profile,
+      currentCompany: company || null,
+      view: profile.role === "SuperAdmin" ? "super-admin" : "dashboard",
+      loading: false
+    }));
+      
+    if (company) {
+      setCompaniesData([company]);
+    }
+  };
+
+  const notify = (msg, type = "success") => {
+    setNotification({ msg, type });
+    setTimeout(() => setNotification(null), 3500);
+  };
+
+  const updateState = (updates) => setState(s => ({ ...s, ...updates }));
+
+  const login = async (email, password) => {
+    setState(s => ({ ...s, loading: true }));
+    
+    // 1. Tenta fazer o Login
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      if (error.message.includes("Invalid login credentials") || error.message.includes("invalid claim")) {
+        // 2. Se falhar, assume que é um usuário novo e tenta Registrar!
+        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password });
+        if (signUpError) {
+           notify("Erro ao criar conta: " + signUpError.message, "error");
+           setState(s => ({ ...s, loading: false }));
+           return;
+        }
+        // Registrou com sucesso, segue o fluxo para verificar dados e ir pra tela 2
+        await fetchUserData(signUpData.user);
+        return;
+      }
+      
+      notify(error.message, "error");
+      setState(s => ({ ...s, loading: false }));
+      return;
+    }
+    
+    // Logou com sucesso, puxa os dados!
+    await fetchUserData(data.user);
+    notify(`Bem-vindo!`);
+  };
+
+  const logout = async () => {
+    await supabase.auth.signOut();
+    setState(s => ({ ...s, currentUser: null, currentCompany: null, view: "landing" }));
+  };
+
+  const isDark = state.theme === "dark";
+  const cssVars = isDark ? {
+    "--bg": "#0a0a0f", "--bg2": "#111118", "--bg3": "#1a1a24",
+    "--card": "#16161f", "--border": "#2a2a38", "--text": "#e8e8f0",
+    "--text2": "#9090a8", "--accent": "#7c3aed", "--accent2": "#a855f7",
+    "--accent3": "#c084fc", "--success": "#10b981", "--danger": "#ef4444", "--warning": "#f59e0b",
+  } : {
+    "--bg": "#f0eff8", "--bg2": "#e8e7f2", "--bg3": "#ffffff",
+    "--card": "#ffffff", "--border": "#dddcf0", "--text": "#1a1a2e",
+    "--text2": "#5a5a7a", "--accent": "#7c3aed", "--accent2": "#7c3aed",
+    "--accent3": "#7c3aed", "--success": "#059669", "--danger": "#dc2626", "--warning": "#d97706",
+  };
+
+  if (state.loading) return <div style={{ ...cssVars, minHeight: "100vh", background: "var(--bg)", display: "flex", justifyContent: "center", alignItems: "center", color: "var(--text)" }}>Carregando...</div>;
+
+  return (
+    <div style={{ ...cssVars, minHeight: "100vh", background: "var(--bg)", color: "var(--text)", fontFamily: "'Outfit', sans-serif", transition: "background 0.3s, color 0.3s" }}>
+      <style>{`
+        *{box-sizing:border-box}body{margin:0}
+        .btn-primary{background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;border:none;border-radius:12px;padding:10px 22px;cursor:pointer;font-family:'Outfit',sans-serif;font-weight:700;font-size:15px;transition:all 0.2s;letter-spacing:.2px}
+        .btn-primary:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(124,58,237,0.4)}
+        .card-hover{transition:transform 0.2s,box-shadow 0.2s}
+        .card-hover:hover{transform:translateY(-3px);box-shadow:0 12px 32px rgba(0,0,0,0.2)}
+        input:focus,select:focus,textarea:focus{border-color:#7c3aed!important;outline:none}
+        @keyframes slideIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+        @keyframes fadeUp{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+        .table-row:hover{background:var(--bg3)!important}
+        .kanban-card{cursor:grab}.kanban-card:active{cursor:grabbing}
+        ::-webkit-scrollbar{width:5px;height:5px}
+        ::-webkit-scrollbar-thumb{background:rgba(124,58,237,0.3);border-radius:4px}
+        textarea{font-family:'Outfit',sans-serif}
+        .nav-btn{background:transparent;border:1px solid var(--border);border-radius:8px;padding:8px 18px;color:var(--text);cursor:pointer;font-family:'Outfit',sans-serif;font-weight:500;transition:all 0.15s}
+        .nav-btn:hover{background:var(--bg3)}
+        select option{background:var(--bg3);color:var(--text)}
+      `}</style>
+      <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+
+      {notification && (
+        <div style={{ position: "fixed", top: 20, right: 20, zIndex: 9999, padding: "13px 20px", borderRadius: 12, background: notification.type === "error" ? "var(--danger)" : "var(--success)", color: "#fff", fontWeight: 700, fontSize: 14, boxShadow: "0 8px 32px rgba(0,0,0,0.3)", animation: "slideIn 0.3s ease", display: "flex", alignItems: "center", gap: 8, maxWidth: 340 }}>
+          {notification.type === "error" ? "✕" : "✓"} {notification.msg}
+        </div>
+      )}
+
+      {state.view === "landing" && <LandingPage state={state} updateState={updateState} isDark={isDark} theme={state.theme} login={login} notify={notify} setPublicSlug={setPublicSlug} />}
+      {state.view === "register-account" && <RegisterAccount state={state} updateState={updateState} isDark={isDark} notify={notify} />}
+      {state.view === "register-company" && <RegisterCompany state={state} updateState={updateState} isDark={isDark} notify={notify} fetchUserData={fetchUserData} />}
+      {state.view === "public-company" && <PublicCompanyPage state={state} updateState={updateState} isDark={isDark} slug={publicSlug} notify={notify} />}
+      {state.view === "dashboard" && state.currentUser && state.currentCompany && <Dashboard state={state} updateState={updateState} isDark={isDark} theme={state.theme} logout={logout} notify={notify} section={dashSection} setSection={setDashSection} fetchUserData={() => fetchUserData(state.currentUser)} setPublicSlug={setPublicSlug} />}
+    </div>
+  );
+}
+
+// ─── LANDING PAGE ───────────────────────────────────────────────────────────
+function LandingPage({ updateState, isDark, theme, login, setPublicSlug }) {
+  const [loginForm, setLoginForm] = useState({ email: "", password: "" });
+  const [showLogin, setShowLogin] = useState(false);
+  const [demoInput, setDemoInput] = useState("");
+  const [openFaq, setOpenFaq] = useState(null);
+
+  const handleLogin = (e) => {
+    e.preventDefault();
+    login(loginForm.email, loginForm.password);
+  };
+
+  const features = [
+    { icon: "👥", title: "Banco de Talentos", desc: "Centralize todos os currículos e candidatos em um só lugar, com busca, filtros por status e exportação em XLS/PDF." },
+    { icon: "🗂️", title: "Kanban Interativo", desc: "Arraste e solte candidatos entre as etapas do processo seletivo: Aguardando, Entrevista, Contratado e mais." },
+    { icon: "💼", title: "Gestão de Vagas", desc: "Crie, edite e gerencie vagas abertas com descrições e requisitos. Vincule candidatos automaticamente." },
+    { icon: "🌐", title: "Página Pública", desc: "Link exclusivo para sua empresa receber candidaturas sem login. Os candidatos escolhem a vaga e enviam o currículo." },
+    { icon: "📊", title: "Dashboard Analítico", desc: "Visualize métricas em tempo real: total de candidatos, vagas abertas, pipeline de status e candidaturas recentes." },
+    { icon: "🔐", title: "Multi‑Usuários & Permissões", desc: "Convide sua equipe de RH com papéis diferenciados: Proprietário, RH ou Visualização. Controle total de acessos." },
+    { icon: "📝", title: "Anotações do RH", desc: "Adicione observações internas a cada candidato. Histórico completo visível para toda a equipe autorizada." },
+    { icon: "📄", title: "Exportação XLS & PDF", desc: "Baixe relatórios completos dos candidatos em planilha Excel ou documento PDF com um clique." },
+  ];
+
+  const plans = [
+    { name: "Starter", price: "Grátis", period: "para sempre", color: "#10b981", features: ["Até 50 candidatos", "1 usuário", "Página pública", "Kanban básico", "Exportação XLS"], cta: "Começar Grátis" },
+    { name: "Profissional", price: "R$ 49", period: "/mês", color: "#7c3aed", popular: true, features: ["Candidatos ilimitados", "5 usuários", "Página pública personalizada", "Kanban completo", "Exportação XLS + PDF", "Anotações do RH", "Suporte prioritário"], cta: "Assinar Agora" },
+    { name: "Empresarial", price: "R$ 149", period: "/mês", color: "#3b82f6", features: ["Tudo do Profissional", "Usuários ilimitados", "API de integração", "White-label", "Relatórios avançados", "Gerente de sucesso dedicado", "SLA garantido"], cta: "Falar com Vendas" },
+  ];
+
+  const faqs = [
+    { q: "Preciso instalar alguma coisa?", a: "Não! O Banco de Talentos Pro é 100% online. Basta criar sua conta e começar a usar direto do navegador, em qualquer dispositivo." },
+    { q: "Como funciona a página pública?", a: "Ao criar sua empresa, geramos um link exclusivo (ex: sistema.com/empresa/sua-empresa). Compartilhe com candidatos e eles podem se inscrever nas vagas sem precisar de login." },
+    { q: "Posso exportar os dados dos candidatos?", a: "Sim! Oferecemos exportação em Excel (XLS) e PDF. Basta ir à seção Banco de Talentos e clicar nos botões de exportação." },
+    { q: "É seguro? Onde ficam meus dados?", a: "Utilizamos o Supabase, infraestrutura enterprise-grade com PostgreSQL, criptografia em repouso, SSL e políticas de Row Level Security (RLS) para garantir isolamento total dos dados entre empresas." },
+    { q: "Posso adicionar minha equipe de RH?", a: "Claro! Na seção Usuários do dashboard, você pode convidar colaboradores com diferentes níveis de permissão: Proprietário, RH ou Visualização." },
+  ];
+
+  const stats = [
+    { value: "2.500+", label: "Empresas ativas" },
+    { value: "180k+", label: "Candidatos gerenciados" },
+    { value: "99.9%", label: "Uptime garantido" },
+    { value: "4.9★", label: "Avaliação média" },
+  ];
+
+  return (
+    <div>
+      <style>{`
+        @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
+        @keyframes pulse-glow{0%,100%{box-shadow:0 0 40px rgba(124,58,237,0.15)}50%{box-shadow:0 0 80px rgba(124,58,237,0.3)}}
+        @keyframes gradient-shift{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+        .feature-card{transition:transform 0.3s, box-shadow 0.3s, border-color 0.3s}
+        .feature-card:hover{transform:translateY(-6px);box-shadow:0 20px 50px rgba(124,58,237,0.15);border-color:rgba(124,58,237,0.4)!important}
+        .plan-card{transition:transform 0.3s, box-shadow 0.3s}
+        .plan-card:hover{transform:translateY(-6px);box-shadow:0 20px 60px rgba(0,0,0,0.25)}
+        .stat-item{transition:transform 0.2s}.stat-item:hover{transform:scale(1.05)}
+        .faq-item{transition:all 0.2s}.faq-item:hover{border-color:rgba(124,58,237,0.4)!important}
+      `}</style>
+
+      {/* ─── NAVBAR ─── */}
+      <nav style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, padding: "0 clamp(20px,4vw,48px)", height: 68, display: "flex", alignItems: "center", justifyContent: "space-between", background: isDark ? "rgba(10,10,15,0.88)" : "rgba(240,239,248,0.92)", backdropFilter: "blur(20px)", borderBottom: "1px solid var(--border)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 36, height: 36, background: "linear-gradient(135deg,#7c3aed,#a855f7)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 900, fontSize: 16 }}>B</div>
+          <span style={{ fontWeight: 800, fontSize: 18, background: "linear-gradient(135deg,var(--accent2),var(--accent3))", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Banco de Talentos Pro</span>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button onClick={() => updateState({ theme: theme === "dark" ? "light" : "dark" })} style={{ background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 17 }}>{isDark ? "☀️" : "🌙"}</button>
+          <button className="nav-btn" onClick={() => setShowLogin(!showLogin)}>Entrar</button>
+          <button className="btn-primary" onClick={() => updateState({ view: "register-account" })}>Começar Agora</button>
+        </div>
+      </nav>
+
+      {/* ─── LOGIN DROPDOWN ─── */}
+      {showLogin && (
+        <div style={{ position: "fixed", top: 76, right: 20, zIndex: 200, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 16, padding: 24, width: 340, boxShadow: "0 24px 64px rgba(0,0,0,0.4)", animation: "slideIn 0.2s ease" }}>
+          <h3 style={{ margin: "0 0 20px", fontSize: 17, fontWeight: 700 }}>Entrar na plataforma</h3>
+          <form onSubmit={handleLogin}>
+            <input placeholder="Email" type="email" value={loginForm.email} onChange={e => setLoginForm(f => ({ ...f, email: e.target.value }))} style={inputStyle} />
+            <input placeholder="Senha" type="password" value={loginForm.password} onChange={e => setLoginForm(f => ({ ...f, password: e.target.value }))} style={{ ...inputStyle, marginTop: -4 }} />
+            <button type="submit" className="btn-primary" style={{ width: "100%", marginTop: 4 }}>Entrar</button>
+          </form>
+          <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
+            <p style={{ fontSize: 12, color: "var(--text2)", margin: "0 0 8px" }}>Ver página pública:</p>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input placeholder="slug da empresa" value={demoInput} onChange={e => setDemoInput(e.target.value)} style={{ ...inputStyle, flex: 1, margin: 0, padding: "8px 10px", fontSize: 12 }} />
+              <button onClick={() => { if (demoInput) { setPublicSlug(demoInput); updateState({ view: "public-company" }); setShowLogin(false); } }} style={{ background: "var(--accent)", color: "#fff", border: "none", borderRadius: 8, padding: "0 14px", cursor: "pointer", fontSize: 14, fontFamily: "inherit", fontWeight: 700 }}>→</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════ HERO SECTION ═══════════ */}
+      <section style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "120px clamp(20px,5vw,80px) 80px", textAlign: "center", position: "relative", overflow: "hidden" }}>
+        {/* Background orbs */}
+        <div style={{ position: "absolute", top: "10%", left: "15%", width: 400, height: 400, background: "radial-gradient(circle, rgba(124,58,237,0.12) 0%, transparent 70%)", borderRadius: "50%", animation: "float 7s ease-in-out infinite", pointerEvents: "none" }} />
+        <div style={{ position: "absolute", bottom: "5%", right: "10%", width: 350, height: 350, background: "radial-gradient(circle, rgba(236,72,153,0.1) 0%, transparent 70%)", borderRadius: "50%", animation: "float 9s ease-in-out infinite 2s", pointerEvents: "none" }} />
+        <div style={{ position: "absolute", top: "40%", right: "25%", width: 200, height: 200, background: "radial-gradient(circle, rgba(59,130,246,0.08) 0%, transparent 70%)", borderRadius: "50%", animation: "float 6s ease-in-out infinite 1s", pointerEvents: "none" }} />
+
+        <div style={{ maxWidth: 820, position: "relative", animation: "fadeUp 0.8s ease both" }}>
+          <div style={{ display: "inline-block", background: isDark ? "rgba(124,58,237,0.15)" : "rgba(124,58,237,0.1)", border: "1px solid rgba(124,58,237,0.3)", borderRadius: 50, padding: "6px 20px", fontSize: 13, fontWeight: 600, color: "var(--accent2)", marginBottom: 28, letterSpacing: 0.5 }}>
+            🚀 Plataforma #1 de Gestão de Talentos no Brasil
+          </div>
+          <h1 style={{ fontSize: "clamp(38px,6.5vw,78px)", fontWeight: 900, lineHeight: 1.06, margin: "0 0 24px", letterSpacing: -2.5 }}>
+            Recrute os melhores<br />
+            <span style={{ background: "linear-gradient(135deg, #7c3aed 0%, #ec4899 50%, #f59e0b 100%)", backgroundSize: "200% 200%", animation: "gradient-shift 4s ease infinite", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>talentos do mercado</span>
+          </h1>
+          <p style={{ fontSize: "clamp(16px,2vw,20px)", color: "var(--text2)", lineHeight: 1.7, margin: "0 auto 44px", maxWidth: 600 }}>
+            Centralize candidatos, gerencie vagas, acompanhe processos seletivos com Kanban e receba candidaturas por link público. Tudo em uma plataforma moderna e segura.
+          </p>
+          <div style={{ display: "flex", gap: 14, justifyContent: "center", flexWrap: "wrap" }}>
+            <button className="btn-primary" style={{ fontSize: 17, padding: "16px 38px", animation: "pulse-glow 3s infinite" }} onClick={() => updateState({ view: "register-account" })}>Criar Conta Grátis →</button>
+            <button className="nav-btn" style={{ fontSize: 15, padding: "14px 28px" }} onClick={() => { const el = document.getElementById('features-section'); el && el.scrollIntoView({behavior:'smooth'}); }}>Ver Funcionalidades ↓</button>
+          </div>
+          <p style={{ fontSize: 12, color: "var(--text2)", marginTop: 18, opacity: 0.7 }}>✓ Grátis para começar &nbsp;&nbsp; ✓ Sem cartão de crédito &nbsp;&nbsp; ✓ Setup em 2 minutos</p>
+        </div>
+      </section>
+
+      {/* ═══════════ STATS BAR ═══════════ */}
+      <section style={{ padding: "50px clamp(20px,5vw,80px)", borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)", background: isDark ? "rgba(22,22,31,0.6)" : "rgba(255,255,255,0.5)" }}>
+        <div style={{ maxWidth: 1000, margin: "0 auto", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 30, textAlign: "center" }}>
+          {stats.map(s => (
+            <div key={s.label} className="stat-item" style={{ cursor: "default" }}>
+              <div style={{ fontSize: 38, fontWeight: 900, background: "linear-gradient(135deg,var(--accent2),#ec4899)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>{s.value}</div>
+              <div style={{ fontSize: 14, color: "var(--text2)", fontWeight: 500, marginTop: 4 }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ═══════════ FEATURES SECTION ═══════════ */}
+      <section id="features-section" style={{ padding: "100px clamp(20px,5vw,80px)", maxWidth: 1200, margin: "0 auto" }}>
+        <div style={{ textAlign: "center", marginBottom: 60 }}>
+          <div style={{ display: "inline-block", background: "rgba(124,58,237,0.12)", border: "1px solid rgba(124,58,237,0.25)", borderRadius: 50, padding: "5px 18px", fontSize: 12, fontWeight: 700, color: "var(--accent2)", marginBottom: 16, textTransform: "uppercase", letterSpacing: 1.5 }}>Funcionalidades</div>
+          <h2 style={{ fontSize: "clamp(28px,4vw,44px)", fontWeight: 900, margin: "0 0 16px", letterSpacing: -1 }}>Tudo que você precisa para recrutar</h2>
+          <p style={{ color: "var(--text2)", fontSize: 17, maxWidth: 550, margin: "0 auto", lineHeight: 1.6 }}>Ferramentas poderosas para cada etapa do seu processo seletivo, do recebimento à contratação.</p>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(270px,1fr))", gap: 20 }}>
+          {features.map((f, i) => (
+            <div key={f.title} className="feature-card" style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 18, padding: "28px 24px", cursor: "default", animationDelay: `${i*0.07}s` }}>
+              <div style={{ width: 50, height: 50, background: isDark ? "rgba(124,58,237,0.12)" : "rgba(124,58,237,0.08)", borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, marginBottom: 16 }}>{f.icon}</div>
+              <h3 style={{ margin: "0 0 8px", fontSize: 17, fontWeight: 700 }}>{f.title}</h3>
+              <p style={{ margin: 0, fontSize: 13.5, color: "var(--text2)", lineHeight: 1.65 }}>{f.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ═══════════ HOW IT WORKS ═══════════ */}
+      <section style={{ padding: "80px clamp(20px,5vw,80px)", background: isDark ? "rgba(22,22,31,0.5)" : "rgba(255,255,255,0.4)", borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)" }}>
+        <div style={{ maxWidth: 900, margin: "0 auto", textAlign: "center" }}>
+          <div style={{ display: "inline-block", background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.25)", borderRadius: 50, padding: "5px 18px", fontSize: 12, fontWeight: 700, color: "#10b981", marginBottom: 16, textTransform: "uppercase", letterSpacing: 1.5 }}>Como funciona</div>
+          <h2 style={{ fontSize: "clamp(28px,4vw,40px)", fontWeight: 900, margin: "0 0 50px", letterSpacing: -1 }}>Comece em 3 passos simples</h2>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(230px,1fr))", gap: 30 }}>
+            {[
+              { step: "01", icon: "📝", title: "Crie sua conta", desc: "Cadastre-se gratuitamente com seu email e configure sua empresa em menos de 2 minutos." },
+              { step: "02", icon: "🔗", title: "Compartilhe o link", desc: "Publique seu link exclusivo em redes sociais, sites de emprego ou envie diretamente aos candidatos." },
+              { step: "03", icon: "🎯", title: "Gerencie talentos", desc: "Acompanhe candidatos no Kanban, adicione notas, exporte relatórios e contrate os melhores." }
+            ].map((s, i) => (
+              <div key={s.step} style={{ position: "relative", textAlign: "center" }}>
+                <div style={{ width: 72, height: 72, background: "linear-gradient(135deg,#7c3aed,#a855f7)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 30, margin: "0 auto 20px", boxShadow: "0 8px 30px rgba(124,58,237,0.3)" }}>{s.icon}</div>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "var(--accent2)", marginBottom: 8, textTransform: "uppercase", letterSpacing: 2 }}>Passo {s.step}</div>
+                <h3 style={{ margin: "0 0 8px", fontSize: 18, fontWeight: 700 }}>{s.title}</h3>
+                <p style={{ color: "var(--text2)", fontSize: 14, lineHeight: 1.6, margin: 0 }}>{s.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ═══════════ PRICING ═══════════ */}
+      <section style={{ padding: "100px clamp(20px,5vw,80px)", maxWidth: 1100, margin: "0 auto" }}>
+        <div style={{ textAlign: "center", marginBottom: 60 }}>
+          <div style={{ display: "inline-block", background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.25)", borderRadius: 50, padding: "5px 18px", fontSize: 12, fontWeight: 700, color: "#f59e0b", marginBottom: 16, textTransform: "uppercase", letterSpacing: 1.5 }}>Planos & Preços</div>
+          <h2 style={{ fontSize: "clamp(28px,4vw,44px)", fontWeight: 900, margin: "0 0 16px", letterSpacing: -1 }}>Investimento que cabe no seu bolso</h2>
+          <p style={{ color: "var(--text2)", fontSize: 17, maxWidth: 500, margin: "0 auto" }}>Escolha o plano ideal para o tamanho da sua empresa.</p>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 22, alignItems: "start" }}>
+          {plans.map(p => (
+            <div key={p.name} className="plan-card" style={{ background: "var(--card)", border: p.popular ? "2px solid var(--accent2)" : "1px solid var(--border)", borderRadius: 22, padding: "32px 28px", position: "relative", overflow: "hidden" }}>
+              {p.popular && <div style={{ position: "absolute", top: 16, right: -30, background: "linear-gradient(135deg,#7c3aed,#a855f7)", color: "#fff", fontSize: 11, fontWeight: 800, padding: "4px 40px", transform: "rotate(45deg)", letterSpacing: 0.5 }}>POPULAR</div>}
+              <div style={{ fontSize: 13, fontWeight: 700, color: p.color, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8 }}>{p.name}</div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginBottom: 20 }}>
+                <span style={{ fontSize: 42, fontWeight: 900 }}>{p.price}</span>
+                <span style={{ fontSize: 15, color: "var(--text2)", fontWeight: 500 }}>{p.period}</span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 28 }}>
+                {p.features.map(f => (
+                  <div key={f} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14 }}>
+                    <span style={{ color: p.color, fontSize: 15, fontWeight: 700 }}>✓</span>
+                    <span style={{ color: "var(--text2)" }}>{f}</span>
+                  </div>
+                ))}
+              </div>
+              <button className="btn-primary" onClick={() => updateState({ view: "register-account" })} style={{ width: "100%", padding: "13px", background: p.popular ? "linear-gradient(135deg,#7c3aed,#a855f7)" : `linear-gradient(135deg,${p.color},${p.color}cc)` }}>{p.cta}</button>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ═══════════ FAQ ═══════════ */}
+      <section style={{ padding: "80px clamp(20px,5vw,80px)", background: isDark ? "rgba(22,22,31,0.5)" : "rgba(255,255,255,0.4)", borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)" }}>
+        <div style={{ maxWidth: 750, margin: "0 auto" }}>
+          <div style={{ textAlign: "center", marginBottom: 50 }}>
+            <div style={{ display: "inline-block", background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.25)", borderRadius: 50, padding: "5px 18px", fontSize: 12, fontWeight: 700, color: "#3b82f6", marginBottom: 16, textTransform: "uppercase", letterSpacing: 1.5 }}>FAQ</div>
+            <h2 style={{ fontSize: "clamp(28px,4vw,40px)", fontWeight: 900, margin: "0 0 8px", letterSpacing: -1 }}>Perguntas frequentes</h2>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {faqs.map((faq, i) => (
+              <div key={i} className="faq-item" style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 14, overflow: "hidden", cursor: "pointer" }} onClick={() => setOpenFaq(openFaq === i ? null : i)}>
+                <div style={{ padding: "18px 22px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontWeight: 600, fontSize: 15 }}>{faq.q}</span>
+                  <span style={{ fontSize: 18, color: "var(--accent2)", fontWeight: 700, transition: "transform 0.2s", transform: openFaq === i ? "rotate(45deg)" : "rotate(0)" }}>+</span>
+                </div>
+                {openFaq === i && <div style={{ padding: "0 22px 18px", color: "var(--text2)", fontSize: 14, lineHeight: 1.7, borderTop: "1px solid var(--border)", paddingTop: 14 }}>{faq.a}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ═══════════ CTA FINAL ═══════════ */}
+      <section style={{ padding: "100px clamp(20px,5vw,80px)", textAlign: "center" }}>
+        <div style={{ maxWidth: 700, margin: "0 auto", background: "linear-gradient(135deg, rgba(124,58,237,0.12) 0%, rgba(236,72,153,0.08) 100%)", border: "1px solid rgba(124,58,237,0.25)", borderRadius: 28, padding: "60px 40px", position: "relative", overflow: "hidden" }}>
+          <div style={{ position: "absolute", top: -50, right: -50, width: 200, height: 200, background: "radial-gradient(circle, rgba(124,58,237,0.15) 0%, transparent 70%)", borderRadius: "50%", pointerEvents: "none" }} />
+          <h2 style={{ fontSize: "clamp(26px,4vw,42px)", fontWeight: 900, margin: "0 0 16px", letterSpacing: -1 }}>Pronto para transformar seu RH?</h2>
+          <p style={{ color: "var(--text2)", fontSize: 17, margin: "0 0 36px", lineHeight: 1.6 }}>Junte-se a milhares de empresas que já modernizaram seus processos de recrutamento.</p>
+          <button className="btn-primary" style={{ fontSize: 18, padding: "16px 40px", animation: "pulse-glow 3s infinite" }} onClick={() => updateState({ view: "register-account" })}>Começar Gratuitamente →</button>
+        </div>
+      </section>
+
+      {/* ═══════════ FOOTER ═══════════ */}
+      <footer style={{ padding: "50px clamp(20px,5vw,80px) 30px", borderTop: "1px solid var(--border)", background: isDark ? "rgba(10,10,15,0.6)" : "rgba(240,239,248,0.6)" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 40, marginBottom: 40 }}>
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+                <div style={{ width: 32, height: 32, background: "linear-gradient(135deg,#7c3aed,#a855f7)", borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 900, fontSize: 14 }}>B</div>
+                <span style={{ fontWeight: 800, fontSize: 16, background: "linear-gradient(135deg,var(--accent2),var(--accent3))", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Banco de Talentos Pro</span>
+              </div>
+              <p style={{ color: "var(--text2)", fontSize: 13, lineHeight: 1.7, margin: 0 }}>A plataforma inteligente para gestão de talentos e processos seletivos.</p>
+            </div>
+            <div>
+              <h4 style={{ margin: "0 0 14px", fontSize: 14, fontWeight: 700, color: "var(--text)" }}>Produto</h4>
+              {["Funcionalidades", "Preços", "Changelog", "Roadmap"].map(l => (
+                <div key={l} style={{ fontSize: 13, color: "var(--text2)", marginBottom: 8, cursor: "pointer" }}>{l}</div>
+              ))}
+            </div>
+            <div>
+              <h4 style={{ margin: "0 0 14px", fontSize: 14, fontWeight: 700, color: "var(--text)" }}>Suporte</h4>
+              {["Central de Ajuda", "Documentação", "Contato", "Status da API"].map(l => (
+                <div key={l} style={{ fontSize: 13, color: "var(--text2)", marginBottom: 8, cursor: "pointer" }}>{l}</div>
+              ))}
+            </div>
+            <div>
+              <h4 style={{ margin: "0 0 14px", fontSize: 14, fontWeight: 700, color: "var(--text)" }}>Legal</h4>
+              {["Termos de Uso", "Privacidade", "LGPD", "Cookies"].map(l => (
+                <div key={l} style={{ fontSize: 13, color: "var(--text2)", marginBottom: 8, cursor: "pointer" }}>{l}</div>
+              ))}
+            </div>
+          </div>
+          <div style={{ borderTop: "1px solid var(--border)", paddingTop: 20, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+            <span style={{ fontSize: 12, color: "var(--text2)" }}>© 2026 Banco de Talentos Pro. Todos os direitos reservados.</span>
+            <div style={{ display: "flex", gap: 16 }}>
+              {["LinkedIn", "Instagram", "Twitter"].map(s => (
+                <span key={s} style={{ fontSize: 12, color: "var(--text2)", cursor: "pointer", fontWeight: 500 }}>{s}</span>
+              ))}
+            </div>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+// ─── AUTH LAYOUT ───────────────────────────────────────────────────────────
+function AuthLayout({ children, isDark, title, subtitle, updateState }) {
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, background: isDark ? "radial-gradient(ellipse at 50% 0%, rgba(124,58,237,0.18) 0%, var(--bg) 65%)" : "var(--bg)" }}>
+      <div style={{ width: "100%", maxWidth: 430 }}>
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
+          <button onClick={() => updateState({ view: "landing" })} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer", marginBottom: 18 }}>
+            ← Voltar
+          </button>
+          <h2 style={{ fontSize: 26, fontWeight: 900, margin: "0 0 8px" }}>{title}</h2>
+          <div style={{ color: "var(--text2)", fontSize: 13, fontWeight: 600, textTransform: "uppercase", letterSpacing: 1 }}>{subtitle}</div>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ─── REGISTER ACCOUNT ──────────────────────────────────────────────────────
+function RegisterAccount({ updateState, isDark, notify }) {
+  const [form, setForm] = useState({ email: "", password: "", confirm: "", loading: false });
+  
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (form.password !== form.confirm) { notify("Senhas não conferem", "error"); return; }
+    setForm(f => ({ ...f, loading: true }));
+    
+    // Register no Supabase Auth
+    const { data, error } = await supabase.auth.signUp({ email: form.email, password: form.password });
+    
+    if (error) {
+      notify(error.message, "error");
+      setForm(f => ({ ...f, loading: false }));
+      return;
+    }
+    
+    updateState({ view: "register-company" });
+    notify("Conta criada! Adicione os dados da sua empresa.");
+  };
+
+  return (
+    <AuthLayout isDark={isDark} title="Criar sua conta" subtitle="Passo 1 de 2" updateState={updateState}>
+      <form onSubmit={handleSubmit} style={{ background: "var(--card)", padding: 32, borderRadius: 20, border: "1px solid var(--border)"}}>
+        <Label>Email *</Label>
+        <input type="email" placeholder="seu@email.com" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} style={inputStyle} required />
+        <Label>Senha *</Label>
+        <input type="password" placeholder="Mínimo 6 caracteres" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} style={inputStyle} required />
+        <Label>Confirmar senha *</Label>
+        <input type="password" placeholder="Repita a senha" value={form.confirm} onChange={e => setForm(f => ({ ...f, confirm: e.target.value }))} style={inputStyle} required />
+        <button type="submit" disabled={form.loading} className="btn-primary" style={{ width: "100%", marginTop: 8, padding: "14px" }}>{form.loading ? "Processando..." : "Continuar →"}</button>
+      </form>
+    </AuthLayout>
+  );
+}
+
+// ─── REGISTER COMPANY ──────────────────────────────────────────────────────
+function RegisterCompany({ updateState, isDark, notify, fetchUserData }) {
+  const [form, setForm] = useState({ name: "", city: "", loading: false });
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setForm(f => ({ ...f, loading: true }));
+    
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    // 1. Criar empresa
+    const slug = slugify(form.name);
+    const { data: company, error: cErr } = await supabase.from('companies').insert([{ name: form.name, city: form.city, slug, owner_id: user.id }]).select().single();
+    if (cErr) {
+       notify("Erro ao criar empresa: " + cErr.message, "error");
+       setForm(f => ({ ...f, loading: false }));
+       return;
+    }
+
+    // 2. Criar perfil na public.users
+    const { error: pErr } = await supabase.from('users').insert([{ id: user.id, email: user.email, name: user.email.split("@")[0], role: "Proprietário", company_id: company.id }]);
+    if (pErr) {
+       notify("Erro ao gerar seu perfil na empresa: " + pErr.message, "error");
+       setForm(f => ({ ...f, loading: false }));
+       return;
+    }
+
+    await fetchUserData(user);
+    notify(`Bem-vindo à ${form.name}!`);
+  };
+
+  return (
+    <AuthLayout isDark={isDark} title="Dados da Empresa" subtitle="Passo 2 de 2" updateState={updateState}>
+      <form onSubmit={handleSubmit} style={{ background: "var(--card)", padding: 32, borderRadius: 20, border: "1px solid var(--border)"}}>
+        <Label>Nome da Empresa *</Label>
+        <input placeholder="Sua Empresa Ltda" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={inputStyle} required />
+        <Label>Cidade Base *</Label>
+        <input placeholder="Sua Cidade" value={form.city} onChange={e => setForm(f => ({ ...f, city: e.target.value }))} style={inputStyle} required />
+        <button type="submit" disabled={form.loading} className="btn-primary" style={{ width: "100%", marginTop: 8, padding: "14px" }}>{form.loading ? "Salvando..." : "Concluir →"}</button>
+      </form>
+    </AuthLayout>
+  );
+}
+
+// ─── PUBLIC PAGE ───────────────────────────────────────────────────────────
+function PublicCompanyPage({ updateState, isDark, slug, notify }) {
+  const [company, setCompany] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState({ name: "", email: "", phone: "", role: "", address: "", experience: "", resumeFile: null });
+
+  useEffect(() => {
+    const fetchCo = async () => {
+      const { data } = await supabase.from('companies').select('*, jobs(*)').eq('slug', slug).eq('active', true).single();
+      setCompany(data);
+      setLoading(false);
+    }
+    fetchCo();
+  }, [slug]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!company) return;
+    
+    const messagePayload = `Endereço: ${form.address}`;
+    const fileBaseName = form.resumeFile ? form.resumeFile.name : null;
+
+    const { error } = await supabase.from('candidates').insert([{
+      company_id: company.id, name: form.name, email: form.email, phone: form.phone, role: form.role, experience: form.experience, message: messagePayload, resume_file: fileBaseName
+    }]);
+    if (error) { notify(error.message, "error"); return; }
+    notify("Recebemos o seu currículo!");
+    setForm({ name: "", email: "", phone: "", role: "", address: "", experience: "", resumeFile: null });
+  };
+
+  if (loading) return <div style={{ minHeight: "100vh", display: "flex", justifyContent: "center", alignItems: "center", background: "var(--bg)", color: "var(--text)" }}>Carregando página pública...</div>;
+  if (!company) return <div style={{ padding: 40, textAlign: "center", minHeight: "100vh", background: "var(--bg)", color: "var(--text)" }}>Empresa não encontrada ou inativa. <br/><br/><button className="btn-primary" onClick={() => updateState({view: 'landing'})}>Voltar ao Início</button></div>;
+
+  const openJobs = company.jobs ? company.jobs.filter(j => j.status === "Aberta") : [];
+
+  return (
+    <div style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--text)" }}>
+      <nav style={{ padding: "16px clamp(16px,4vw,48px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--bg2)", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 44, height: 44, background: "linear-gradient(135deg,#7c3aed,#a855f7)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, color: "#fff", fontWeight: 900 }}>{company.name[0]}</div>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 18 }}>{company.name}</div>
+            <div style={{ fontSize: 12, color: "var(--text2)" }}>{company.city}{company.state ? `, ${company.state}` : ""}</div>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button className="nav-btn" style={{ fontSize: 13 }} onClick={() => updateState({ view: "landing" })}>← Início</button>
+        </div>
+      </nav>
+
+      <div style={{ maxWidth: 800, margin: "40px auto", padding: 20 }}>
+        <h1 style={{ fontSize: 28, margin: "0 0 10px", fontWeight: 800 }}>Vagas Abertas</h1>
+        <p style={{ color: "var(--text2)", marginBottom: 30 }}>Preencha o formulário abaixo para se candidatar à nossa empresa.</p>
+        
+        <div style={{ background: "var(--card)", padding: 32, borderRadius: 16, border: "1px solid var(--border)" }}>
+           <h3 style={{ margin: "0 0 20px", fontSize: 20 }}>Enviar Candidatura</h3>
+           <form onSubmit={handleSubmit}>
+              <Label>Nome Completo *</Label>
+              <input placeholder="Ex: João da Silva" value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} style={inputStyle} required />
+              
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                <div>
+                  <Label>Email *</Label>
+                  <input placeholder="joao@email.com" value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))} style={inputStyle} required type="email" />
+                </div>
+                <div>
+                  <Label>Telefone / WhatsApp *</Label>
+                  <input placeholder="(11) 99999-9999" value={form.phone} onChange={e=>setForm(f=>({...f,phone:e.target.value}))} style={inputStyle} required />
+                </div>
+              </div>
+
+              <Label>Endereço Completo</Label>
+              <input placeholder="Rua, Número, Bairro, Cidade" value={form.address} onChange={e=>setForm(f=>({...f,address:e.target.value}))} style={inputStyle} />
+              
+              <Label>Vaga Desejada *</Label>
+              {openJobs.length > 0 ? (
+                <select value={form.role} onChange={e=>setForm(f=>({...f,role:e.target.value}))} style={inputStyle} required>
+                  <option value="" disabled>Selecione uma vaga...</option>
+                  {openJobs.map(job => (
+                    <option key={job.id} value={job.title}>{job.title}</option>
+                  ))}
+                  <option value="Banco de Talentos">Banco de Talentos (Sem vaga específica)</option>
+                </select>
+              ) : (
+                <input placeholder="Ex: Desenvolvedor Front-end" value={form.role} onChange={e=>setForm(f=>({...f,role:e.target.value}))} style={inputStyle} required />
+              )}
+              
+              <Label>Experiência e Habilidades</Label>
+              <textarea placeholder="Fale um pouco sobre você e suas experiências anteriores..." value={form.experience} onChange={e=>setForm(f=>({...f,experience:e.target.value}))} style={{ ...inputStyle, height: 80, resize: "vertical" }}></textarea>
+
+              <Label>Anexar Currículo (PDF, opcional)</Label>
+              <input type="file" accept=".pdf,.doc,.docx" onChange={e=>setForm(f=>({...f,resumeFile:e.target.files[0]}))} style={{ ...inputStyle, padding: "10px" }} />
+
+              <button type="submit" className="btn-primary" style={{ width: "100%", padding: "14px", marginTop: 10, fontSize: 16 }}>Enviar Currículo</button>
+           </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── DASHBOARD ─────────────────────────────────────────────────────────────
+function Dashboard({ state, updateState, isDark, theme, logout, notify, section, setSection, fetchUserData, setPublicSlug, exportXLS, exportPDF }) {
+  const { currentUser } = state;
+  const company = state.currentCompany;
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [showProfile, setShowProfile] = useState(false);
+
+  if (!company) return <div style={{ padding: 40 }}>Empresa não encontrada.</div>;
+
+  const stats = {
+    total: company.candidates?.length || 0,
+    open: (company.jobs || []).filter(j => j.status === "Aberta").length,
+    waiting: (company.candidates || []).filter(c => c.status === "Aguardando").length,
+    hired: (company.candidates || []).filter(c => c.status === "Contratado" || c.status === "Efetivo").length,
+    closed: (company.candidates || []).filter(c => c.status === "Encerrado").length,
+  };
+
+  const navItems = [
+    { id: "dashboard", icon: "📊", label: "Dashboard" },
+    { id: "talents", icon: "👥", label: "Banco de Talentos" },
+    { id: "kanban", icon: "🗂️", label: "Kanban" },
+    { id: "jobs", icon: "💼", label: "Vagas" },
+    { id: "users", icon: "🔑", label: "Usuários" },
+    { id: "settings", icon: "⚙️", label: "Configurações" },
+  ];
+
+  return (
+    <div style={{ display: "flex", minHeight: "100vh" }}>
+      <aside style={{ width: sidebarOpen ? 248 : 66, background: "var(--bg2)", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", transition: "width 0.3s ease", overflow: "hidden", position: "fixed", top: 0, bottom: 0, left: 0, zIndex: 50, flexShrink: 0 }}>
+        <div style={{ padding: "18px 14px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10, overflow: "hidden" }}>
+          <div style={{ width: 36, height: 36, minWidth: 36, background: "linear-gradient(135deg,#7c3aed,#a855f7)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: "#fff", fontWeight: 900 }}>{(company.name && company.name[0]) || 'E'}</div>
+          {sidebarOpen && <div style={{ overflow: "hidden" }}>
+            <div style={{ fontWeight: 700, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{company.name}</div>
+            <div style={{ fontSize: 11, color: "var(--text2)" }}>{currentUser.role}</div>
+          </div>}
+        </div>
+        <nav style={{ flex: 1, padding: "10px 7px" }}>
+          {navItems.map(item => (
+            <button key={item.id} onClick={() => setSection(item.id)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "10px 11px", borderRadius: 9, border: "none", background: section === item.id ? "rgba(124,58,237,0.18)" : "transparent", color: section === item.id ? "var(--accent2)" : "var(--text2)", cursor: "pointer", fontFamily: "'Outfit',sans-serif", fontWeight: section === item.id ? 700 : 400, fontSize: 14, textAlign: "left", marginBottom: 2, transition: "all 0.15s", overflow: "hidden" }}>
+              <span style={{ fontSize: 17, minWidth: 20, textAlign: "center" }}>{item.icon}</span>
+              {sidebarOpen && <span style={{ whiteSpace: "nowrap" }}>{item.label}</span>}
+            </button>
+          ))}
+        </nav>
+        <div style={{ padding: "10px 7px", borderTop: "1px solid var(--border)" }}>
+          <button onClick={() => { setPublicSlug(company.slug); updateState({ view: "public-company" }); }} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "10px 11px", borderRadius: 9, border: "none", background: "transparent", color: "var(--text2)", cursor: "pointer", fontFamily: "'Outfit',sans-serif", fontSize: 14, marginBottom: 2, overflow: "hidden" }}>
+            <span style={{ fontSize: 17, minWidth: 20, textAlign: "center" }}>🌐</span>
+            {sidebarOpen && <span style={{ whiteSpace: "nowrap" }}>Página Pública</span>}
+          </button>
+          <button onClick={logout} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "10px 11px", borderRadius: 9, border: "none", background: "transparent", color: "var(--danger)", cursor: "pointer", fontFamily: "'Outfit',sans-serif", fontSize: 14, overflow: "hidden" }}>
+            <span style={{ fontSize: 17, minWidth: 20, textAlign: "center" }}>🚪</span>
+            {sidebarOpen && <span style={{ whiteSpace: "nowrap" }}>Sair</span>}
+          </button>
+        </div>
+      </aside>
+
+      <main style={{ flex: 1, marginLeft: sidebarOpen ? 248 : 66, transition: "margin-left 0.3s ease", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+        <header style={{ height: 62, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid var(--border)", background: "var(--bg)", position: "sticky", top: 0, zIndex: 40 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "var(--text2)" }}>☰</button>
+            <h1 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>{navItems.find(i => i.id === section)?.label || "Dashboard"}</h1>
+          </div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", position: "relative" }}>
+            <button onClick={() => updateState({ theme: theme === "dark" ? "light" : "dark" })} style={{ background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 16 }}>{isDark ? "☀️" : "🌙"}</button>
+            {(company.candidates || []).filter(c => c.status === "Aguardando").length > 0 && (
+              <button onClick={() => setSection("talents")} style={{ background: "rgba(245,158,11,0.15)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#f59e0b", display: "flex", alignItems: "center", gap: 5, fontFamily: "inherit" }}>
+                🔔 <span style={{ background: "#f59e0b", color: "#000", borderRadius: 10, padding: "1px 7px", fontSize: 11 }}>{(company.candidates || []).filter(c => c.status === "Aguardando").length}</span>
+              </button>
+            )}
+            <button onClick={() => setShowProfile(!showProfile)} style={{ width: 34, height: 34, background: "linear-gradient(135deg,#7c3aed,#a855f7)", borderRadius: 50, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: "#fff", fontWeight: 700, border: "none", cursor: "pointer" }}>{(currentUser.name && currentUser.name[0]) || 'U'}</button>
+            {showProfile && (
+              <div style={{ position: "absolute", top: 44, right: 0, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 14, padding: 8, minWidth: 220, boxShadow: "0 16px 48px rgba(0,0,0,0.3)", zIndex: 200 }} onClick={e => e.stopPropagation()}>
+                <div style={{ padding: "10px 14px 12px", borderBottom: "1px solid var(--border)" }}>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>{currentUser.name}</div>
+                  <div style={{ fontSize: 12, color: "var(--text2)" }}>{currentUser.email}</div>
+                  <span style={{ marginTop: 5, display: "inline-block", padding: "2px 9px", borderRadius: 12, fontSize: 11, fontWeight: 700, background: "rgba(124,58,237,0.15)", color: "var(--accent2)" }}>{currentUser.role}</span>
+                </div>
+                <div style={{ padding: "6px 0" }}>
+                  <button onClick={() => { setSection("settings"); setShowProfile(false); }} style={{ width: "100%", textAlign: "left", padding: "9px 14px", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, color: "var(--text)", borderRadius: 8, display: "flex", alignItems: "center", gap: 8 }}>⚙️ Configurações</button>
+                  <button onClick={() => { setPublicSlug(company.slug); updateState({ view: "public-company" }); setShowProfile(false); }} style={{ width: "100%", textAlign: "left", padding: "9px 14px", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, color: "var(--text)", borderRadius: 8, display: "flex", alignItems: "center", gap: 8 }}>🌐 Página Pública</button>
+                  <button onClick={() => { logout(); setShowProfile(false); }} style={{ width: "100%", textAlign: "left", padding: "9px 14px", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, color: "var(--danger)", borderRadius: 8, display: "flex", alignItems: "center", gap: 8 }}>🚪 Sair</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </header>
+
+        <div style={{ padding: "24px", flex: 1 }}>
+          {section === "dashboard" && <DashboardHome stats={stats} company={company} updateState={updateState} setSection={setSection} setPublicSlug={setPublicSlug} />}
+          {section === "talents" && <TalentsSection company={company} fetchUserData={fetchUserData} notify={notify} currentUser={currentUser} exportXLS={exportXLS} exportPDF={exportPDF} />}
+          {section === "kanban" && <KanbanSection company={company} fetchUserData={fetchUserData} notify={notify} currentUser={currentUser} />}
+          {section === "jobs" && <JobsSection company={company} fetchUserData={fetchUserData} notify={notify} currentUser={currentUser} />}
+          {section === "users" && <UsersSection company={company} fetchUserData={fetchUserData} notify={notify} currentUser={currentUser} />}
+          {section === "settings" && <SettingsSection company={company} fetchUserData={fetchUserData} notify={notify} currentUser={currentUser} />}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function DashboardHome({ stats, company, setSection, setPublicSlug }) {
+  const statusCount = {};
+  const cands = company.candidates || [];
+  ALL_STATUSES.forEach(s => { statusCount[s] = cands.filter(c => c.status === s).length; });
+  const maxCount = Math.max(...Object.values(statusCount), 1);
+  const recent = [...cands].sort((a,b) => (b.created_at||"").localeCompare(a.created_at||"")).slice(0,5);
+
+  return (
+    <div>
+      <div style={{ marginBottom: 22 }}>
+        <h2 style={{ margin: "0 0 4px", fontSize: 24, fontWeight: 800 }}>Olá! 👋</h2>
+        <p style={{ color: "var(--text2)", margin: 0, fontSize: 14 }}>Resumo de <strong>{company.name}</strong></p>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(148px,1fr))", gap: 12, marginBottom: 18 }}>
+        {[
+          { label: "Candidatos", value: stats.total, icon: "👥", color: "#7c3aed", s: "talents" },
+          { label: "Vagas Abertas", value: stats.open, icon: "💼", color: "#3b82f6", s: "jobs" },
+          { label: "Aguardando", value: stats.waiting, icon: "⏳", color: "#f59e0b", s: "talents" },
+          { label: "Contratados", value: stats.hired, icon: "✅", color: "#10b981", s: "talents" },
+          { label: "Encerrados", value: stats.closed, icon: "🔒", color: "#6b7280", s: "talents" },
+        ].map(c => (
+          <div key={c.label} onClick={() => setSection(c.s)} className="card-hover" style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 14, padding: "16px", position: "relative", overflow: "hidden", cursor: "pointer" }}>
+            <div style={{ position: "absolute", top: -6, right: -4, fontSize: 36, opacity: 0.07 }}>{c.icon}</div>
+            <div style={{ fontSize: 28, fontWeight: 900, color: c.color }}>{c.value}</div>
+            <div style={{ fontSize: 12, color: "var(--text2)", marginTop: 3, fontWeight: 500 }}>{c.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(290px,1fr))", gap: 14, marginBottom: 14 }}>
+        <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 14, padding: "20px 22px" }}>
+          <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 700 }}>Pipeline de Candidatos</h3>
+          {ALL_STATUSES.map(s => {
+            const count = statusCount[s];
+            const pct = (count / maxCount) * 100;
+            return (
+              <div key={s} style={{ marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                  <span style={{ color: STATUS_CONFIG[s].color, fontWeight: 600 }}>{s}</span>
+                  <span style={{ color: "var(--text2)", fontWeight: 700 }}>{count}</span>
+                </div>
+                <div style={{ height: 8, background: "var(--bg3)", borderRadius: 6, overflow: "hidden" }}>
+                  <div style={{ width: `${pct}%`, height: "100%", background: `linear-gradient(90deg,${STATUS_CONFIG[s].color},${STATUS_CONFIG[s].color}88)`, borderRadius: 6, transition: "width 0.9s cubic-bezier(.4,0,.2,1)" }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 14, padding: "20px 22px" }}>
+          <h3 style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 700 }}>Candidaturas Recentes</h3>
+          {recent.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "16px 0", color: "var(--text2)" }}>
+              <div style={{ fontSize: 30, marginBottom: 8 }}>📭</div>
+              <p style={{ fontSize: 13, margin: "0 0 12px" }}>Nenhuma candidatura ainda.</p>
+            </div>
+          ) : recent.map((c, i) => (
+            <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: i < recent.length-1 ? "1px solid var(--border)" : "none" }}>
+              <div style={{ width: 28, height: 28, background: STATUS_CONFIG[c.status].bg, borderRadius: 50, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: STATUS_CONFIG[c.status].color, flexShrink: 0 }}>{c.name[0]}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
+                <div style={{ fontSize: 11, color: "var(--text2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.role}</div>
+              </div>
+              <div style={{ textAlign: "right", flexShrink: 0 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 10, background: STATUS_CONFIG[c.status].bg, color: STATUS_CONFIG[c.status].color, display: "block", marginBottom: 2 }}>{c.status}</span>
+                <span style={{ fontSize: 10, color: "var(--text2)" }}>{c.created_at ? new Date(c.created_at).toLocaleDateString() : "—"}</span>
+              </div>
+            </div>
+          ))}
+          {recent.length > 0 && <button onClick={() => setSection("talents")} style={{ marginTop: 10, background: "none", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 14px", cursor: "pointer", color: "var(--text2)", fontFamily: "inherit", fontSize: 12, width: "100%" }}>Ver todos →</button>}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 14 }}>
+        <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 14, padding: "18px 20px" }}>
+          <h3 style={{ margin: "0 0 12px", fontSize: 15, fontWeight: 700 }}>Vagas</h3>
+          {(company.jobs||[]).length === 0 ? <p style={{ color: "var(--text2)", fontSize: 13 }}>Nenhuma vaga cadastrada.</p> :
+            company.jobs.slice(0,4).map(job => (
+              <div key={job.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--border)" }}>
+                <div style={{ fontWeight: 600, fontSize: 13, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingRight: 8 }}>{job.title}</div>
+                <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 9px", borderRadius: 10, background: job.status === "Aberta" ? "rgba(16,185,129,0.15)" : "rgba(107,114,128,0.15)", color: job.status === "Aberta" ? "#10b981" : "#6b7280", whiteSpace: "nowrap" }}>{job.status}</span>
+              </div>
+            ))}
+          <button onClick={() => setSection("jobs")} style={{ marginTop: 10, background: "none", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 14px", cursor: "pointer", color: "var(--text2)", fontFamily: "inherit", fontSize: 12, width: "100%" }}>Gerenciar vagas →</button>
+        </div>
+
+        <div style={{ background: "var(--card)", border: "1px solid rgba(124,58,237,0.35)", borderRadius: 14, padding: "18px 20px" }}>
+          <h3 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700 }}>🔗 Link Público</h3>
+          <p style={{ color: "var(--text2)", fontSize: 13, margin: "0 0 12px", lineHeight: 1.5 }}>Compartilhe para receber candidaturas sem login.</p>
+          <div style={{ background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: 8, padding: "9px 12px", display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <code style={{ fontSize: 11, color: "var(--accent2)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>sistema.com/empresa/{company.slug}</code>
+            <button onClick={() => { try { navigator.clipboard.writeText(`sistema.com/empresa/${company.slug}`); } catch(e){} }} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, flexShrink: 0 }} title="Copiar">📋</button>
+          </div>
+          <button className="btn-primary" style={{ fontSize: 13, padding: "9px 16px", width: "100%" }} onClick={() => { setPublicSlug(company.slug); updateState({ view: "public-company" }); }}>Ver Página Pública →</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// REST STUBS
+function TalentsSection({ company, notify, fetchUserData, currentUser }) {
+  const [filter, setFilter] = useState("Todos");
+  const [search, setSearch] = useState("");
+  const [viewing, setViewing] = useState(null);
+  const [noteTab, setNoteTab] = useState("info"); // "info" | "notes"
+  const [newNote, setNewNote] = useState("");
+  const canEdit = currentUser.role !== "Visualização";
+
+  const cands = company.candidates || [];
+  const filtered = cands.filter(c => {
+    const ms = filter === "Todos" || c.status === filter;
+    const mq = !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.role.toLowerCase().includes(search.toLowerCase()) || c.email.toLowerCase().includes(search.toLowerCase());
+    return ms && mq;
+  });
+
+  const updateStatus = async (id, s) => {
+    await supabase.from('candidates').update({ status: s }).eq('id', id);
+    await fetchUserData();
+    if (viewing?.id === id) setViewing(v => ({ ...v, status: s }));
+    notify(`Status → ${s}`);
+  };
+
+  const addNote = async (candidateId) => {
+    if (!newNote.trim()) return;
+    const note = { candidate_id: candidateId, text: newNote.trim(), author: currentUser.name };
+    // Create note in Supabase
+    const { data: insertedNote, error } = await supabase.from('candidate_notes').insert([note]).select().single();
+    if (error) { notify("Erro ao salvar anotação", "error"); return; }
+    
+    await fetchUserData();
+    setViewing(v => ({ ...v, candidate_notes: [...(v.candidate_notes||[]), insertedNote] }));
+    setNewNote("");
+    notify("Anotação salva!");
+  };
+
+  const deleteNote = async (candidateId, noteId) => {
+    await supabase.from('candidate_notes').delete().eq('id', noteId);
+    await fetchUserData();
+    setViewing(v => ({ ...v, candidate_notes: (v.candidate_notes||[]).filter(n => n.id !== noteId) }));
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <h2 style={{ margin: "0 0 3px", fontSize: 20, fontWeight: 800 }}>Banco de Talentos</h2>
+          <p style={{ color: "var(--text2)", margin: 0, fontSize: 13 }}>{cands.length} candidatos · {filtered.length} exibidos</p>
+        </div>
+        {canEdit && (
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => exportXLS(cands, company.name)} style={{ background: "rgba(16,185,129,0.15)", color: "#10b981", border: "1px solid rgba(16,185,129,0.3)", borderRadius: 9, padding: "8px 16px", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+              📊 Exportar XLS
+            </button>
+            <button onClick={() => exportPDF(cands, company.name)} style={{ background: "rgba(239,68,68,0.15)", color: "#ef4444", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 9, padding: "8px 16px", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+              📄 Exportar PDF
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+        {["Todos", ...ALL_STATUSES].map(s => {
+          const count = s === "Todos" ? cands.length : cands.filter(c => c.status === s).length;
+          const active = filter === s;
+          const cfg = STATUS_CONFIG[s];
+          return (
+            <button key={s} onClick={() => setFilter(s)} style={{ padding: "5px 12px", borderRadius: 20, border: `1px solid ${active ? (cfg?.color || "var(--accent2)") : "var(--border)"}`, background: active ? (cfg?.bg || "rgba(124,58,237,0.15)") : "transparent", color: active ? (cfg?.color || "var(--accent2)") : "var(--text2)", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: active ? 700 : 400, transition: "all 0.15s", display: "flex", alignItems: "center", gap: 5 }}>
+              {s} <span style={{ background: active ? (cfg?.color || "var(--accent2)") : "var(--border)", color: active ? "#fff" : "var(--text2)", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>{count}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        <input placeholder="🔍 Buscar por nome, cargo ou email..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...inputStyle, margin: 0, maxWidth: 420 }} />
+      </div>
+
+      <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 14, overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: "var(--bg2)" }}>
+                {["Nome","Cargo","Data","Status","Ações"].map(h => (
+                  <th key={h} style={{ padding: "11px 14px", textAlign: "left", fontWeight: 600, color: "var(--text2)", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 ? (
+                <tr><td colSpan={5} style={{ padding: "40px", textAlign: "center", color: "var(--text2)" }}>
+                  <div style={{ fontSize: 32, marginBottom: 8 }}>🔍</div>
+                  Nenhum candidato encontrado.
+                </td></tr>
+              ) : filtered.map(c => (
+                <tr key={c.id} style={{ borderTop: "1px solid var(--border)", transition: "background 0.1s" }} className="table-row">
+                  <td style={{ padding: "11px 14px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                      <div style={{ width: 30, height: 30, background: STATUS_CONFIG[c.status].bg, borderRadius: 50, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: STATUS_CONFIG[c.status].color, flexShrink: 0 }}>{c.name[0]}</div>
+                      <div>
+                        <div style={{ fontWeight: 600 }}>{c.name}</div>
+                        <div style={{ fontSize: 11, color: "var(--text2)" }}>{c.email}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td style={{ padding: "11px 14px", color: "var(--text2)", maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.role}</td>
+                  <td style={{ padding: "11px 14px", color: "var(--text2)", whiteSpace: "nowrap" }}>{new Date(c.created_at).toLocaleDateString()}</td>
+                  <td style={{ padding: "11px 14px" }}>
+                    {canEdit ? (
+                      <select value={c.status} onChange={e => updateStatus(c.id, e.target.value)} style={{ background: STATUS_CONFIG[c.status].bg, color: STATUS_CONFIG[c.status].color, border: `1px solid ${STATUS_CONFIG[c.status].color}55`, borderRadius: 20, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", outline: "none" }}>
+                        {ALL_STATUSES.map(s => <option key={s}>{s}</option>)}
+                      </select>
+                    ) : (
+                      <span style={{ background: STATUS_CONFIG[c.status].bg, color: STATUS_CONFIG[c.status].color, padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>{c.status}</span>
+                    )}
+                  </td>
+                  <td style={{ padding: "11px 14px" }}>
+                    <div style={{ display: "flex", gap: 5 }}>
+                      <button onClick={() => { setViewing(c); setNoteTab("info"); }} style={{ background: "rgba(59,130,246,0.12)", color: "#3b82f6", border: "none", borderRadius: 7, padding: "5px 10px", cursor: "pointer", fontSize: 12, fontFamily: "inherit", fontWeight: 600 }}>👁 Ver</button>
+                      {canEdit && (
+                        <button onClick={() => { setViewing(c); setNoteTab("notes"); }} style={{ background: "rgba(245,158,11,0.12)", color: "#f59e0b", border: "none", borderRadius: 7, padding: "5px 8px", cursor: "pointer", fontSize: 12, fontFamily: "inherit", fontWeight: 600 }} title="Anotações">📝 {(c.candidate_notes||[]).length > 0 ? `(${c.candidate_notes.length})` : ""}</button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {viewing && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.72)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setViewing(null)}>
+          <div style={{ background: "var(--card)", borderRadius: 20, width: "100%", maxWidth: 560, maxHeight: "92vh", display: "flex", flexDirection: "column", border: "1px solid var(--border)" }} onClick={e => e.stopPropagation()}>
+            <div style={{ padding: "20px 24px 0", flexShrink: 0 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ width: 44, height: 44, background: STATUS_CONFIG[viewing.status].bg, borderRadius: 50, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 700, color: STATUS_CONFIG[viewing.status].color }}>{viewing.name[0]}</div>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 17 }}>{viewing.name}</div>
+                    <div style={{ color: "var(--text2)", fontSize: 13 }}>{viewing.role}</div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ background: STATUS_CONFIG[viewing.status].bg, color: STATUS_CONFIG[viewing.status].color, padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{viewing.status}</span>
+                  <button onClick={() => setViewing(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "var(--text2)" }}>✕</button>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 0, borderBottom: "1px solid var(--border)" }}>
+                {[["info","📋 Informações"], ["notes","📝 Anotações" + ((viewing.candidate_notes||[]).length ? ` (${viewing.candidate_notes.length})` : "")]].map(([id,label]) => (
+                  <button key={id} onClick={() => setNoteTab(id)} style={{ padding: "10px 18px", border: "none", borderBottom: noteTab === id ? "2px solid var(--accent2)" : "2px solid transparent", background: "transparent", color: noteTab === id ? "var(--accent2)" : "var(--text2)", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: noteTab === id ? 700 : 400, marginBottom: -1, transition: "all 0.15s" }}>{label}</button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ padding: "20px 24px", overflowY: "auto", flex: 1 }}>
+              {noteTab === "info" && (
+                <div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+                    {[["📧 Email", viewing.email], ["📞 Telefone", viewing.phone||"—"], ["📅 Data", new Date(viewing.created_at).toLocaleDateString()], ["📄 Arquivo", viewing.resume_file||"—"]].map(([k,v]) => (
+                      <div key={k} style={{ background: "var(--bg3)", borderRadius: 10, padding: "10px 14px" }}>
+                        <div style={{ fontSize: 11, color: "var(--text2)", marginBottom: 3 }}>{k}</div>
+                        <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {viewing.experience && (
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ fontSize: 12, color: "var(--text2)", marginBottom: 6, fontWeight: 600 }}>EXPERIÊNCIA</div>
+                      <p style={{ background: "var(--bg3)", borderRadius: 10, padding: "12px 14px", margin: 0, fontSize: 13, lineHeight: 1.6, color: "var(--text)" }}>{viewing.experience}</p>
+                    </div>
+                  )}
+                  {viewing.message && (
+                    <div>
+                      <div style={{ fontSize: 12, color: "var(--text2)", marginBottom: 6, fontWeight: 600 }}>MENSAGEM</div>
+                      <p style={{ background: "var(--bg3)", borderRadius: 10, padding: "12px 14px", margin: 0, fontSize: 13, lineHeight: 1.6, color: "var(--text)" }}>{viewing.message}</p>
+                    </div>
+                  )}
+                  {canEdit && (
+                    <div style={{ marginTop: 16 }}>
+                      <div style={{ fontSize: 12, color: "var(--text2)", marginBottom: 6, fontWeight: 600 }}>ALTERAR STATUS</div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {ALL_STATUSES.map(s => (
+                          <button key={s} onClick={() => updateStatus(viewing.id, s)} style={{ padding: "5px 12px", borderRadius: 20, border: `1px solid ${STATUS_CONFIG[s].color}55`, background: viewing.status === s ? STATUS_CONFIG[s].bg : "transparent", color: STATUS_CONFIG[s].color, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: viewing.status === s ? 700 : 400 }}>{s}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {noteTab === "notes" && (
+                <div>
+                  {(viewing.candidate_notes||[]).length === 0 ? (
+                    <div style={{ textAlign: "center", padding: "24px 0", color: "var(--text2)" }}>
+                      <div style={{ fontSize: 30, marginBottom: 8 }}>📝</div>
+                      <p style={{ fontSize: 13, margin: 0 }}>Nenhuma anotação ainda. Adicione observações abaixo.</p>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+                      {[...(viewing.candidate_notes||[])].reverse().map(note => (
+                        <div key={note.id} style={{ background: "var(--bg3)", borderRadius: 10, padding: "12px 14px", position: "relative" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--accent2)" }}>{note.author}</span>
+                            <span style={{ fontSize: 11, color: "var(--text2)" }}>{new Date(note.created_at).toLocaleDateString()}</span>
+                          </div>
+                          <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6 }}>{note.text}</p>
+                          {canEdit && <button onClick={() => deleteNote(viewing.id, note.id)} style={{ position: "absolute", top: 8, right: 10, background: "none", border: "none", fontSize: 14, cursor: "pointer", color: "var(--text2)", opacity: 0.5 }} title="Remover">✕</button>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {canEdit && (
+                    <div>
+                      <textarea placeholder="Escreva uma observação sobre este candidato..." value={newNote} onChange={e => setNewNote(e.target.value)} style={{ ...inputStyle, height: 80, resize: "vertical", marginBottom: 8 }} />
+                      <button className="btn-primary" style={{ padding: "9px 20px", fontSize: 13 }} onClick={() => addNote(viewing.id)} disabled={!newNote.trim()}>Salvar Anotação</button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+function KanbanSection({ company, fetchUserData, notify, currentUser }) {
+  const canEdit = currentUser.role !== "Visualização";
+  const [dragging, setDragging] = useState(null);
+  const [dragOver, setDragOver] = useState(null);
+  const columns = ALL_STATUSES;
+  const cands = company.candidates || [];
+
+  const moveCandidate = async (candidateId, newStatus) => {
+    await supabase.from('candidates').update({ status: newStatus }).eq('id', candidateId);
+    await fetchUserData();
+    notify(`Movido para "${newStatus}"`);
+  };
+
+  const handleDrop = (status) => {
+    if (dragging && dragging !== status && canEdit) {
+      moveCandidate(dragging, status);
+    }
+    setDragging(null);
+    setDragOver(null);
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom: 20 }}>
+        <h2 style={{ margin: "0 0 4px", fontSize: 20, fontWeight: 800 }}>Kanban Board</h2>
+        <p style={{ color: "var(--text2)", margin: 0, fontSize: 13 }}>
+          {canEdit ? "Arraste os candidatos entre colunas para mudar o status." : "Visualização do pipeline de candidatos."}
+        </p>
+      </div>
+
+      <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 16, minHeight: 500 }}>
+        {columns.map(col => {
+          const colCandidates = cands.filter(c => c.status === col);
+          const isOver = dragOver === col;
+          return (
+            <div
+              key={col}
+              onDragOver={e => { e.preventDefault(); setDragOver(col); }}
+              onDragLeave={() => setDragOver(null)}
+              onDrop={() => handleDrop(col)}
+              style={{
+                minWidth: 200, maxWidth: 220, flexShrink: 0,
+                background: isOver ? `${STATUS_CONFIG[col].bg}` : "var(--bg2)",
+                border: `2px solid ${isOver ? STATUS_CONFIG[col].color : "var(--border)"}`,
+                borderRadius: 14, padding: "14px 12px",
+                transition: "all 0.15s"
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                  <div style={{ width: 10, height: 10, borderRadius: "50%", background: STATUS_CONFIG[col].color }} />
+                  <span style={{ fontWeight: 700, fontSize: 13, color: STATUS_CONFIG[col].color }}>{col}</span>
+                </div>
+                <span style={{ background: STATUS_CONFIG[col].bg, color: STATUS_CONFIG[col].color, borderRadius: 10, padding: "1px 8px", fontSize: 11, fontWeight: 700 }}>{colCandidates.length}</span>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {colCandidates.length === 0 ? (
+                  <div style={{ padding: "20px 10px", textAlign: "center", color: "var(--text2)", fontSize: 12, border: "2px dashed var(--border)", borderRadius: 10 }}>
+                    {isOver ? "Soltar aqui" : "Vazio"}
+                  </div>
+                ) : colCandidates.map(c => (
+                  <div
+                    key={c.id}
+                    draggable={canEdit}
+                    onDragStart={() => setDragging(c.id)}
+                    onDragEnd={() => { setDragging(null); setDragOver(null); }}
+                    style={{
+                      background: "var(--card)", border: "1px solid var(--border)",
+                      borderRadius: 10, padding: "12px 14px",
+                      cursor: canEdit ? "grab" : "default",
+                      opacity: dragging === c.id ? 0.5 : 1,
+                      transition: "all 0.15s",
+                      boxShadow: dragging === c.id ? "0 8px 24px rgba(0,0,0,0.3)" : "none"
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                      <div style={{ width: 26, height: 26, background: `linear-gradient(135deg,${STATUS_CONFIG[c.status].color}44,${STATUS_CONFIG[c.status].color}22)`, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: STATUS_CONFIG[c.status].color, flexShrink: 0 }}>{c.name[0]}</div>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--text2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 6 }}>{c.role}</div>
+                    <div style={{ fontSize: 10, color: "var(--text2)" }}>📅 {new Date(c.created_at).toLocaleDateString()}</div>
+                    {(c.candidate_notes||[]).length > 0 && (
+                      <div style={{ marginTop: 6, fontSize: 10, color: "#f59e0b" }}>📝 {c.candidate_notes.length} anotaç{c.candidate_notes.length > 1 ? "ões" : "ão"}</div>
+                    )}
+                    {canEdit && (
+                      <div style={{ marginTop: 8, display: "flex", gap: 4, flexWrap: "wrap" }}>
+                        {ALL_STATUSES.filter(s => s !== c.status).slice(0, 2).map(s => (
+                          <button key={s} onClick={() => moveCandidate(c.id, s)} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 8, border: `1px solid ${STATUS_CONFIG[s].color}44`, background: STATUS_CONFIG[s].bg, color: STATUS_CONFIG[s].color, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>→ {s}</button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+function JobsSection({ company, notify, fetchUserData, currentUser }) {
+  const [form, setForm] = useState(null);
+  const canEdit = currentUser.role !== "Visualização";
+
+  const saveJob = async () => {
+    if (!form.title) { notify("Informe o cargo", "error"); return; }
+    if (form.id) {
+      await supabase.from('jobs').update({ title: form.title, description: form.description, requirements: form.requirements, status: form.status }).eq('id', form.id);
+      notify("Vaga atualizada!");
+    } else {
+      await supabase.from('jobs').insert([{ company_id: company.id, title: form.title, description: form.description, requirements: form.requirements, status: form.status }]);
+      notify("Vaga criada!");
+    }
+    await fetchUserData();
+    setForm(null);
+  };
+
+  const deleteJob = async (id) => {
+    await supabase.from('jobs').delete().eq('id', id);
+    await fetchUserData();
+    notify("Vaga removida");
+  };
+
+  const toggleStatus = async (job) => {
+    const newStatus = job.status === "Aberta" ? "Fechada" : "Aberta";
+    await supabase.from('jobs').update({ status: newStatus }).eq('id', job.id);
+    await fetchUserData();
+    notify("Atualizado");
+  };
+
+  const jobsList = company.jobs || [];
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div>
+          <h2 style={{ margin: "0 0 3px", fontSize: 20, fontWeight: 800 }}>Vagas</h2>
+          <p style={{ color: "var(--text2)", margin: 0, fontSize: 13 }}>{jobsList.length} cadastradas</p>
+        </div>
+        {canEdit && <button className="btn-primary" style={{ fontSize: 13, padding: "9px 18px" }} onClick={() => setForm({ title: "", description: "", requirements: "", status: "Aberta" })}>+ Nova Vaga</button>}
+      </div>
+
+      <div style={{ display: "grid", gap: 14 }}>
+        {jobsList.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "50px 20px", color: "var(--text2)", background: "var(--card)", borderRadius: 14, border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 36, marginBottom: 10 }}>💼</div><p>Nenhuma vaga cadastrada.</p>
+          </div>
+        ) : jobsList.map(job => (
+          <div key={job.id} style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 14, padding: "22px 24px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                  <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>{job.title}</h3>
+                  <span style={{ padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700, background: job.status === "Aberta" ? "rgba(16,185,129,0.15)" : "rgba(107,114,128,0.15)", color: job.status === "Aberta" ? "#10b981" : "#6b7280" }}>{job.status}</span>
+                </div>
+                <p style={{ color: "var(--text2)", margin: "0 0 6px", lineHeight: 1.5, fontSize: 13 }}>{job.description}</p>
+                {job.requirements && <div style={{ fontSize: 12, color: "var(--text2)" }}><strong style={{ color: "var(--text)" }}>Req:</strong> {job.requirements}</div>}
+              </div>
+              {canEdit && (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => setForm({ ...job })} style={{ background: "rgba(124,58,237,0.12)", color: "var(--accent2)", border: "none", borderRadius: 8, padding: "7px 13px", cursor: "pointer", fontSize: 12, fontFamily: "inherit", fontWeight: 700 }}>✏️</button>
+                  <button onClick={() => toggleStatus(job)} style={{ background: job.status === "Aberta" ? "rgba(239,68,68,0.12)" : "rgba(16,185,129,0.12)", color: job.status === "Aberta" ? "#ef4444" : "#10b981", border: "none", borderRadius: 8, padding: "7px 13px", cursor: "pointer", fontSize: 12, fontFamily: "inherit", fontWeight: 700 }}>
+                    {job.status === "Aberta" ? "Encerrar" : "Reabrir"}
+                  </button>
+                  <button onClick={() => deleteJob(job.id)} style={{ background: "rgba(239,68,68,0.1)", color: "#ef4444", border: "none", borderRadius: 8, padding: "7px 10px", cursor: "pointer", fontSize: 14, fontFamily: "inherit" }}>🗑</button>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {form && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.72)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setForm(null)}>
+          <div style={{ background: "var(--card)", borderRadius: 20, padding: 30, width: "100%", maxWidth: 520, border: "1px solid var(--border)" }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <h2 style={{ margin: 0, fontWeight: 800, fontSize: 19 }}>{form.id ? "Editar Vaga" : "Nova Vaga"}</h2>
+              <button onClick={() => setForm(null)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "var(--text2)" }}>✕</button>
+            </div>
+            <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "var(--text2)" }}>Nome do Cargo *</label>
+            <input placeholder="Ex: Desenvolvedor Front-end" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} style={inputStyle} />
+            <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "var(--text2)" }}>Descrição</label>
+            <textarea placeholder="Descreva a vaga..." value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} style={{ ...inputStyle, height: 80, resize: "vertical" }} />
+            <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "var(--text2)" }}>Requisitos</label>
+            <textarea placeholder="Ex: React, Node.js, SQL..." value={form.requirements} onChange={e => setForm(f => ({ ...f, requirements: e.target.value }))} style={{ ...inputStyle, height: 62, resize: "vertical" }} />
+            <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "var(--text2)" }}>Status</label>
+            <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))} style={inputStyle}>
+              <option>Aberta</option><option>Fechada</option>
+            </select>
+            <button className="btn-primary" style={{ width: "100%", marginTop: 6, padding: "13px" }} onClick={saveJob}>{form.id ? "Salvar" : "Criar Vaga"}</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UsersSection({ company, notify, fetchUserData, currentUser }) {
+  const [form, setForm] = useState(null);
+  const isOwner = currentUser.role === "Proprietário";
+
+  const saveUser = async () => {
+    if (!form.name || !form.email) { notify("Nome e email obrigatórios", "error"); return; }
+    if (form.id) {
+      await supabase.from('users').update({ name: form.name, email: form.email, role: form.role }).eq('id', form.id);
+    } else {
+      // Create user record in public.users to allow them to magic link login later
+      await supabase.from('users').insert([{ email: form.email, name: form.name, role: form.role, company_id: company.id }]);
+    }
+    await fetchUserData();
+    notify("Salvo!"); setForm(null);
+  };
+
+  // We are currently simulating company.users as a filtered array of all users linked to company if backend setup
+  // Let's assume fetchUserData provides this if we joined properly, else fallback to empty array or just the current user.
+  const usersList = company.users || [currentUser]; 
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div>
+          <h2 style={{ margin: "0 0 3px", fontSize: 20, fontWeight: 800 }}>Usuários</h2>
+          <p style={{ color: "var(--text2)", margin: 0, fontSize: 13 }}>{usersList.length} com acesso</p>
+        </div>
+        {isOwner && <button className="btn-primary" style={{ fontSize: 13, padding: "9px 18px" }} onClick={() => setForm({ name: "", email: "", role: "RH" })}>+ Adicionar</button>}
+      </div>
+      <div style={{ display: "grid", gap: 10 }}>
+        {usersList.map(u => (
+          <div key={u.id} style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14, justifyContent: "space-between", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 40, height: 40, background: "linear-gradient(135deg,#7c3aed,#a855f7)", borderRadius: 50, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: "#fff", fontWeight: 700 }}>{u.name[0]}</div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{u.name}</div>
+                <div style={{ fontSize: 12, color: "var(--text2)" }}>{u.email}</div>
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, background: u.role === "Proprietário" ? "rgba(124,58,237,0.15)" : "rgba(59,130,246,0.15)", color: u.role === "Proprietário" ? "var(--accent2)" : "#3b82f6" }}>{u.role}</span>
+              {isOwner && u.role !== "Proprietário" && <button onClick={() => setForm({ ...u })} style={{ background: "rgba(124,58,237,0.1)", color: "var(--accent2)", border: "none", borderRadius: 7, padding: "5px 11px", cursor: "pointer", fontSize: 12, fontFamily: "inherit", fontWeight: 700 }}>Editar</button>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {form && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.72)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setForm(null)}>
+          <div style={{ background: "var(--card)", borderRadius: 20, padding: 30, width: "100%", maxWidth: 420, border: "1px solid var(--border)" }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <h2 style={{ margin: 0, fontWeight: 800, fontSize: 19 }}>{form.id ? "Editar" : "Novo Usuário"}</h2>
+              <button onClick={() => setForm(null)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "var(--text2)" }}>✕</button>
+            </div>
+            <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "var(--text2)" }}>Nome</label>
+            <input placeholder="Nome completo" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={inputStyle} />
+            <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "var(--text2)" }}>Email</label>
+            <input type="email" placeholder="email@empresa.com" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} style={inputStyle} />
+            <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "var(--text2)" }}>Permissão</label>
+            <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))} style={inputStyle}>
+              <option>Administrador</option><option>RH</option><option>Visualização</option>
+            </select>
+            <button className="btn-primary" style={{ width: "100%", marginTop: 6, padding: "13px" }} onClick={saveUser}>{form.id ? "Salvar" : "Adicionar"}</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SettingsSection({ company, notify, fetchUserData, currentUser }) {
+  const [form, setForm] = useState({ name: company.name, phone: company.phone || "", city: company.city, state: company.state || "" });
+  const [tab, setTab] = useState("empresa"); // empresa | plano | danger
+  const canEdit = currentUser.role !== "Visualização";
+  const isOwner = currentUser.role === "Proprietário";
+
+  const save = async () => {
+    if (!form.name || !form.city) { notify("Nome e cidade obrigatórios", "error"); return; }
+    await supabase.from('companies').update({ name: form.name, phone: form.phone, city: form.city, state: form.state }).eq('id', company.id);
+    await fetchUserData();
+    notify("Configurações salvas!");
+  };
+
+  const PLANS = [
+    { id: "free", name: "Gratuito", price: "R$ 0", color: "#6b7280", features: ["Até 50 candidatos", "1 usuário", "3 vagas ativas", "Página pública"] },
+    { id: "pro", name: "Pro", price: "R$ 97/mês", color: "#7c3aed", features: ["Candidatos ilimitados", "5 usuários", "Vagas ilimitadas", "Exportar CSV", "Kanban Board", "Suporte prioritário"], recommended: true },
+    { id: "enterprise", name: "Enterprise", price: "Sob consulta", color: "#ec4899", features: ["Tudo do Pro", "Usuários ilimitados", "API de integração", "Domínio próprio", "SLA garantido"] },
+  ];
+
+  return (
+    <div style={{ maxWidth: 680 }}>
+      <h2 style={{ margin: "0 0 20px", fontSize: 20, fontWeight: 800 }}>Configurações</h2>
+
+      <div style={{ display: "flex", gap: 0, borderBottom: "1px solid var(--border)", marginBottom: 24 }}>
+        {[["empresa","🏢 Empresa"], ["plano","💎 Plano"], ...(isOwner ? [["danger","⚠️ Zona de Risco"]] : [])].map(([id,label]) => (
+          <button key={id} onClick={() => setTab(id)} style={{ padding: "10px 20px", border: "none", borderBottom: tab === id ? `2px solid ${id === "danger" ? "var(--danger)" : "var(--accent2)"}` : "2px solid transparent", background: "transparent", color: tab === id ? (id === "danger" ? "var(--danger)" : "var(--accent2)") : "var(--text2)", cursor: "pointer", fontFamily: "inherit", fontSize: 14, fontWeight: tab === id ? 700 : 400, marginBottom: -1 }}>{label}</button>
+        ))}
+      </div>
+
+      {tab === "empresa" && (
+        <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 14, padding: "24px 28px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+            <div style={{ gridColumn: "1/-1" }}>
+              <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "var(--text2)" }}>Nome da Empresa *</label>
+              <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={inputStyle} disabled={!canEdit} placeholder="Nome da empresa" />
+            </div>
+            <div>
+              <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "var(--text2)" }}>Telefone</label>
+              <input value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} style={inputStyle} disabled={!canEdit} placeholder="(11) 99999-0000" />
+            </div>
+            <div>
+              <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "var(--text2)" }}>Estado (UF)</label>
+              <input value={form.state} onChange={e => setForm(f => ({ ...f, state: e.target.value }))} style={inputStyle} maxLength={2} disabled={!canEdit} placeholder="SP" />
+            </div>
+            <div style={{ gridColumn: "1/-1" }}>
+              <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "var(--text2)" }}>Cidade *</label>
+              <input value={form.city} onChange={e => setForm(f => ({ ...f, city: e.target.value }))} style={inputStyle} disabled={!canEdit} placeholder="São Paulo" />
+            </div>
+          </div>
+          <div style={{ padding: "14px 16px", background: "var(--bg3)", borderRadius: 10, marginBottom: 18, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+            <div>
+              <div style={{ fontSize: 12, color: "var(--text2)", marginBottom: 3 }}>🔗 Link público da empresa</div>
+              <code style={{ color: "var(--accent2)", fontSize: 13 }}>sistema.com/empresa/{company.slug}</code>
+            </div>
+            <button onClick={() => { try { navigator.clipboard.writeText(`sistema.com/empresa/${company.slug}`); } catch(e){} notify("Link copiado!"); }} style={{ background: "rgba(124,58,237,0.12)", color: "var(--accent2)", border: "none", borderRadius: 8, padding: "7px 14px", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 700 }}>📋 Copiar</button>
+          </div>
+          {canEdit && <button className="btn-primary" style={{ padding: "11px 28px" }} onClick={save}>Salvar Alterações</button>}
+        </div>
+      )}
+
+      {tab === "plano" && (
+        <div>
+          <p style={{ color: "var(--text2)", marginBottom: 20, fontSize: 14 }}>Escolha o plano ideal para o tamanho da sua equipe.</p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))", gap: 16 }}>
+            {PLANS.map(plan => (
+              <div key={plan.id} style={{ background: "var(--card)", border: `2px solid ${plan.recommended ? plan.color : "var(--border)"}`, borderRadius: 16, padding: "22px 20px", position: "relative", transition: "transform 0.2s" }} className="card-hover">
+                {plan.recommended && <div style={{ position: "absolute", top: -12, left: "50%", transform: "translateX(-50%)", background: plan.color, color: "#fff", fontSize: 11, fontWeight: 700, padding: "3px 12px", borderRadius: 10, whiteSpace: "nowrap" }}>⭐ RECOMENDADO</div>}
+                <div style={{ fontWeight: 800, fontSize: 18, color: plan.color, marginBottom: 4 }}>{plan.name}</div>
+                <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 16 }}>{plan.price}</div>
+                <ul style={{ listStyle: "none", padding: 0, margin: "0 0 20px" }}>
+                  {plan.features.map(f => <li key={f} style={{ fontSize: 13, color: "var(--text2)", marginBottom: 7, display: "flex", alignItems: "center", gap: 7 }}><span style={{ color: plan.color, fontWeight: 700 }}>✓</span>{f}</li>)}
+                </ul>
+                <button style={{ width: "100%", padding: "10px", borderRadius: 10, border: `1px solid ${plan.color}`, background: plan.recommended ? plan.color : "transparent", color: plan.recommended ? "#fff" : plan.color, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 13 }} onClick={() => notify("Redirecionando para checkout... (em breve!)")}>
+                  {plan.id === "free" ? "Plano Atual" : "Assinar Agora"}
+                </button>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: 20, padding: "16px 20px", background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, fontSize: 13, color: "var(--text2)" }}>
+            💳 Pagamentos processados com segurança. Cancele a qualquer momento. Dúvidas? <span style={{ color: "var(--accent2)", cursor: "pointer", fontWeight: 600 }}>suporte@bancodetalentospro.com.br</span>
+          </div>
+        </div>
+      )}
+
+      {tab === "danger" && isOwner && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: 14, padding: "20px 24px" }}>
+            <h3 style={{ margin: "0 0 6px", fontSize: 16, fontWeight: 700, color: "var(--danger)" }}>⚠️ Zona de Risco</h3>
+            <p style={{ color: "var(--text2)", margin: 0, fontSize: 13, lineHeight: 1.6 }}>Ações irreversíveis. Tenha cuidado.</p>
+          </div>
+          <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, padding: "18px 22px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>Remover todos os candidatos</div>
+              <div style={{ fontSize: 13, color: "var(--text2)" }}>Exclui permanentemente todos os {(company.candidates||[]).length} candidatos do banco de talentos.</div>
+            </div>
+            <button onClick={async () => { if(window.confirm("Tem certeza? Isso apagará TODOS os candidatos!")) { await supabase.from('candidates').delete().eq('company_id', company.id); await fetchUserData(); notify("Candidatos removidos.", "error"); } }} style={{ background: "rgba(239,68,68,0.15)", color: "var(--danger)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 9, padding: "8px 18px", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" }}>Limpar Banco</button>
+          </div>
+          <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, padding: "18px 22px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>Remover todas as vagas</div>
+              <div style={{ fontSize: 13, color: "var(--text2)" }}>Exclui permanentemente todas as {(company.jobs||[]).length} vagas cadastradas.</div>
+            </div>
+            <button onClick={async () => { if(window.confirm("Tem certeza? Isso apagará TODAS as vagas!")) { await supabase.from('jobs').delete().eq('company_id', company.id); await fetchUserData(); notify("Vagas removidas.", "error"); } }} style={{ background: "rgba(239,68,68,0.15)", color: "var(--danger)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 9, padding: "8px 18px", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" }}>Limpar Vagas</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null, errorInfo: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true };
+  }
+  componentDidCatch(error, errorInfo) {
+    this.setState({ error, errorInfo });
+    console.error("ErrorBoundary caught an error", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: 40, color: "var(--danger, red)", background: "var(--bg, white)", minHeight: "100vh" }}>
+          <h2>Oops! Algo quebrou na interface.</h2>
+          <p>Tire um print dessa tela e envie para o suporte:</p>
+          <pre style={{ overflow: "auto", background: "#f8d7da", padding: 10, borderRadius: 5 }}>
+            {this.state.error && this.state.error.toString()}
+            <br />
+            {this.state.errorInfo && this.state.errorInfo.componentStack}
+          </pre>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<ErrorBoundary><App /></ErrorBoundary>);
+
+    </script>
+</body>
+</html>
