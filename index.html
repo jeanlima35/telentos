@@ -1341,6 +1341,13 @@ function UsersSection({ company, notify, fetchUserData, currentUser }) {
   const [saving, setSaving] = useState(false);
   const isOwner = currentUser.role === "Proprietário";
 
+  const generatePassword = () => {
+    const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+";
+    const password = Array.from({ length: 14 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+    setForm(f => ({ ...f, password }));
+    notify("Senha forte gerada com sucesso!");
+  };
+
   const saveUser = async () => {
     if (!form.name || !form.email) { notify("Nome e email obrigatórios", "error"); return; }
     setSaving(true);
@@ -1472,8 +1479,21 @@ function UsersSection({ company, notify, fetchUserData, currentUser }) {
             
             {!form.id && (
               <>
-                <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "var(--text2)" }}>Senha *</label>
-                <input type="password" placeholder="Mínimo 6 caracteres" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} style={inputStyle} />
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <label style={{ fontSize: 13, fontWeight: 600, color: "var(--text2)" }}>Senha *</label>
+                  <button onClick={generatePassword} style={{ background: "none", border: "none", color: "var(--accent2)", fontSize: 11, cursor: "pointer", fontWeight: 700, padding: 0 }}>✨ Gerar Senha Forte</button>
+                </div>
+                <input 
+                  type="password" 
+                  placeholder="Mínimo 6 caracteres" 
+                  value={form.password} 
+                  onChange={e => setForm(f => ({ ...f, password: e.target.value }))} 
+                  style={inputStyle} 
+                  autoComplete="new-password"
+                />
+                <div style={{ fontSize: 10, color: "var(--text2)", marginTop: -10, marginBottom: 14, fontStyle: "italic", lineHeight: 1.3 }}>
+                  💡 Se o navegador alertar sobre "vazamento de dados", use o botão acima. Esse alerta acontece quando a senha já foi usada em outros sites que sofreram ataques.
+                </div>
               </>
             )}
             
