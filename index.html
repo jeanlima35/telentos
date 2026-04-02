@@ -610,7 +610,8 @@ function RegisterCompany({ updateState, isDark, notify, fetchUserData }) {
 function PublicCompanyPage({ updateState, isDark, slug, notify }) {
   const [company, setCompany] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [form, setForm] = useState({ name: "", email: "", phone: "", role: "", address: "", experience: "", resumeFile: null });
+  const [form, setForm] = useState({ name: "", email: "", phone: "", role: "", address: "", experience: "", resumeFile: null, consent: false });
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     const fetchCo = async () => {
@@ -624,16 +625,43 @@ function PublicCompanyPage({ updateState, isDark, slug, notify }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!company) return;
+    if (!form.consent) { notify("Você precisa aceitar os termos de uso de dados", "error"); return; }
     
-    const messagePayload = `Endereço: ${form.address}`;
-    const fileBaseName = form.resumeFile ? form.resumeFile.name : null;
+    setSubmitting(true);
+    let resumePath = null;
+    
+    // 1. Upload do Arquivo (PDF) se existir
+    if (form.resumeFile) {
+      const file = form.resumeFile;
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Date.now()}_${slugify(form.name)}.${fileExt}`;
+      const filePath = `resumes/${fileName}`;
+      
+      const { data, error: uploadError } = await supabase.storage.from('resumes').upload(fileName, file);
+      if (uploadError) {
+        notify("Erro ao subir PDF: " + uploadError.message, "error");
+        setSubmitting(false);
+        return;
+      }
+      resumePath = fileName;
+    }
 
+    const messagePayload = `Endereço: ${form.address}`;
+
+    // 2. Insert do Candidato
     const { error } = await supabase.from('candidates').insert([{
-      company_id: company.id, name: form.name, email: form.email, phone: form.phone, role: form.role, experience: form.experience, message: messagePayload, resume_file: fileBaseName
+      company_id: company.id, name: form.name, email: form.email, phone: form.phone, role: form.role, experience: form.experience, message: messagePayload, resume_file: resumePath
     }]);
-    if (error) { notify(error.message, "error"); return; }
+    
+    if (error) { 
+      notify(error.message, "error"); 
+      setSubmitting(false);
+      return; 
+    }
+    
     notify("Recebemos o seu currículo!");
-    setForm({ name: "", email: "", phone: "", role: "", address: "", experience: "", resumeFile: null });
+    setForm({ name: "", email: "", phone: "", role: "", address: "", experience: "", resumeFile: null, consent: false });
+    setSubmitting(false);
   };
 
   if (loading) return <div style={{ minHeight: "100vh", display: "flex", justifyContent: "center", alignItems: "center", background: "var(--bg)", color: "var(--text)" }}>Carregando página pública...</div>;
@@ -699,7 +727,16 @@ function PublicCompanyPage({ updateState, isDark, slug, notify }) {
               <Label>Anexar Currículo (PDF, opcional)</Label>
               <input type="file" accept=".pdf,.doc,.docx" onChange={e=>setForm(f=>({...f,resumeFile:e.target.files[0]}))} style={{ ...inputStyle, padding: "10px" }} />
 
-              <button type="submit" className="btn-primary" style={{ width: "100%", padding: "14px", marginTop: 10, fontSize: 16 }}>Enviar Currículo</button>
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-start", marginBottom: 18 }}>
+                <input type="checkbox" checked={form.consent} onChange={e=>setForm(f=>({...f,consent:e.target.checked}))} style={{ marginTop: 4, width: 18, height: 18, cursor: "pointer" }} id="consent" />
+                <label htmlFor="consent" style={{ fontSize: 13, color: "var(--text2)", cursor: "pointer", lineHeight: 1.5 }}>
+                  Autorizo o tratamento e armazenamento dos meus dados pessoais fornecidos neste formulário para fins de recrutamento e seleção, conforme a Lei Geral de Proteção de Dados (LGPD).
+                </label>
+              </div>
+
+              <button type="submit" className="btn-primary" style={{ width: "100%", padding: "14px", marginTop: 0, fontSize: 16 }} disabled={submitting}>
+                {submitting ? "Enviando..." : "Enviar Currículo"}
+              </button>
            </form>
         </div>
       </div>
@@ -933,10 +970,10 @@ function TalentsSection({ company, notify, fetchUserData, currentUser }) {
 
   const addNote = async (candidateId) => {
     if (!newNote.trim()) return;
-    const note = { candidate_id: candidateId, text: newNote.trim(), author: currentUser.name };
+    const note = { candidate_id: candidateId, text: newNote.trim(), author_name: currentUser.name };
     // Create note in Supabase
     const { data: insertedNote, error } = await supabase.from('candidate_notes').insert([note]).select().single();
-    if (error) { notify("Erro ao salvar anotação", "error"); return; }
+    if (error) { notify("Erro ao salvar anotação: " + error.message, "error"); return; }
     
     await fetchUserData();
     setViewing(v => ({ ...v, candidate_notes: [...(v.candidate_notes||[]), insertedNote] }));
@@ -1067,7 +1104,14 @@ function TalentsSection({ company, notify, fetchUserData, currentUser }) {
               {noteTab === "info" && (
                 <div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-                    {[["📧 Email", viewing.email], ["📞 Telefone", viewing.phone||"—"], ["📅 Data", new Date(viewing.created_at).toLocaleDateString()], ["📄 Arquivo", viewing.resume_file||"—"]].map(([k,v]) => (
+                    {[
+                      ["📧 Email", viewing.email], 
+                      ["📞 Telefone", viewing.phone||"—"], 
+                      ["📅 Data", new Date(viewing.created_at).toLocaleDateString()], 
+                      ["📄 Arquivo", viewing.resume_file ? (
+                        <a href={`${SUPABASE_URL}/storage/v1/object/public/resumes/${viewing.resume_file}`} target="_blank" style={{ color: "var(--accent2)", fontWeight: 700, textDecoration: "none" }}>Abrir PDF ↗</a>
+                      ) : "—"]
+                    ].map(([k,v]) => (
                       <div key={k} style={{ background: "var(--bg3)", borderRadius: 10, padding: "10px 14px" }}>
                         <div style={{ fontSize: 11, color: "var(--text2)", marginBottom: 3 }}>{k}</div>
                         <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v}</div>
