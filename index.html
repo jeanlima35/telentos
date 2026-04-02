@@ -92,8 +92,17 @@ function App() {
   
   const [companiesData, setCompaniesData] = useState([]);
 
-  // Fetch Session on Load
+  // Check hash on load for public page routing
   useEffect(() => {
+    const hash = window.location.hash;
+    if (hash && hash.startsWith('#/empresa/')) {
+      const slug = hash.replace('#/empresa/', '');
+      if (slug) {
+        setPublicSlug(slug);
+        setState(s => ({ ...s, view: 'public-company', loading: false }));
+        return;
+      }
+    }
     const fetchSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
@@ -889,8 +898,8 @@ function DashboardHome({ stats, company, setSection, setPublicSlug }) {
           <h3 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700 }}>🔗 Link Público</h3>
           <p style={{ color: "var(--text2)", fontSize: 13, margin: "0 0 12px", lineHeight: 1.5 }}>Compartilhe para receber candidaturas sem login.</p>
           <div style={{ background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: 8, padding: "9px 12px", display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-            <code style={{ fontSize: 11, color: "var(--accent2)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>sistema.com/empresa/{company.slug}</code>
-            <button onClick={() => { try { navigator.clipboard.writeText(`sistema.com/empresa/${company.slug}`); } catch(e){} }} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, flexShrink: 0 }} title="Copiar">📋</button>
+            <code style={{ fontSize: 11, color: "var(--accent2)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{window.location.origin + '/#/empresa/' + company.slug}</code>
+            <button onClick={() => { try { navigator.clipboard.writeText(window.location.origin + '/#/empresa/' + company.slug); } catch(e){} notify && notify("Link copiado!"); }} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, flexShrink: 0 }} title="Copiar">📋</button>
           </div>
           <button className="btn-primary" style={{ fontSize: 13, padding: "9px 16px", width: "100%" }} onClick={() => { setPublicSlug(company.slug); updateState({ view: "public-company" }); }}>Ver Página Pública →</button>
         </div>
@@ -1329,22 +1338,84 @@ function JobsSection({ company, notify, fetchUserData, currentUser }) {
 
 function UsersSection({ company, notify, fetchUserData, currentUser }) {
   const [form, setForm] = useState(null);
+  const [saving, setSaving] = useState(false);
   const isOwner = currentUser.role === "Proprietário";
 
   const saveUser = async () => {
     if (!form.name || !form.email) { notify("Nome e email obrigatórios", "error"); return; }
-    if (form.id) {
-      await supabase.from('users').update({ name: form.name, email: form.email, role: form.role }).eq('id', form.id);
-    } else {
-      // Create user record in public.users to allow them to magic link login later
-      await supabase.from('users').insert([{ email: form.email, name: form.name, role: form.role, company_id: company.id }]);
+    setSaving(true);
+    try {
+      if (form.id) {
+        // Editar usuário existente
+        const { error } = await supabase.from('users').update({ name: form.name, role: form.role }).eq('id', form.id);
+        if (error) { notify("Erro ao atualizar: " + error.message, "error"); setSaving(false); return; }
+        notify("Usuário atualizado!");
+      } else {
+        // Criar novo usuário: primeiro registrar no Supabase Auth, depois criar perfil
+        if (!form.password || form.password.length < 6) { notify("Senha obrigatória (mínimo 6 caracteres)", "error"); setSaving(false); return; }
+        
+        // Salvar sessão atual do proprietário
+        const { data: { session: ownerSession } } = await supabase.auth.getSession();
+        
+        // Criar conta do novo usuário no Supabase Auth
+        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ 
+          email: form.email, 
+          password: form.password 
+        });
+        
+        if (signUpError) { 
+          notify("Erro ao criar conta: " + signUpError.message, "error"); 
+          setSaving(false); 
+          return; 
+        }
+        
+        if (!signUpData.user) {
+          notify("Erro: não foi possível criar o usuário", "error");
+          setSaving(false);
+          return;
+        }
+        
+        // Inserir perfil na tabela public.users
+        const { error: profileError } = await supabase.from('users').insert([{ 
+          id: signUpData.user.id, 
+          email: form.email, 
+          name: form.name, 
+          role: form.role, 
+          company_id: company.id 
+        }]);
+        
+        if (profileError) { 
+          notify("Erro ao criar perfil: " + profileError.message, "error"); 
+          setSaving(false); 
+          return; 
+        }
+        
+        // Restaurar sessão do proprietário (signUp pode alterar a sessão)
+        if (ownerSession) {
+          await supabase.auth.setSession({
+            access_token: ownerSession.access_token,
+            refresh_token: ownerSession.refresh_token
+          });
+        }
+        
+        notify("Usuário criado com sucesso! Ele pode fazer login com o email e senha definidos.");
+      }
+      await fetchUserData();
+      setForm(null);
+    } catch (err) {
+      notify("Erro inesperado: " + err.message, "error");
     }
-    await fetchUserData();
-    notify("Salvo!"); setForm(null);
+    setSaving(false);
   };
 
-  // We are currently simulating company.users as a filtered array of all users linked to company if backend setup
-  // Let's assume fetchUserData provides this if we joined properly, else fallback to empty array or just the current user.
+  const deleteUser = async (userId) => {
+    if (!window.confirm("Tem certeza que deseja remover este usuário?")) return;
+    const { error } = await supabase.from('users').delete().eq('id', userId);
+    if (error) { notify("Erro ao remover: " + error.message, "error"); return; }
+    await fetchUserData();
+    notify("Usuário removido!");
+  };
+
   const usersList = company.users || [currentUser]; 
 
   return (
@@ -1354,21 +1425,26 @@ function UsersSection({ company, notify, fetchUserData, currentUser }) {
           <h2 style={{ margin: "0 0 3px", fontSize: 20, fontWeight: 800 }}>Usuários</h2>
           <p style={{ color: "var(--text2)", margin: 0, fontSize: 13 }}>{usersList.length} com acesso</p>
         </div>
-        {isOwner && <button className="btn-primary" style={{ fontSize: 13, padding: "9px 18px" }} onClick={() => setForm({ name: "", email: "", role: "RH" })}>+ Adicionar</button>}
+        {isOwner && <button className="btn-primary" style={{ fontSize: 13, padding: "9px 18px" }} onClick={() => setForm({ name: "", email: "", password: "", role: "RH" })}>+ Adicionar</button>}
       </div>
       <div style={{ display: "grid", gap: 10 }}>
         {usersList.map(u => (
           <div key={u.id} style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14, justifyContent: "space-between", flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ width: 40, height: 40, background: "linear-gradient(135deg,#7c3aed,#a855f7)", borderRadius: 50, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: "#fff", fontWeight: 700 }}>{u.name[0]}</div>
+              <div style={{ width: 40, height: 40, background: u.role === "Proprietário" ? "linear-gradient(135deg,#7c3aed,#a855f7)" : u.role === "RH" ? "linear-gradient(135deg,#3b82f6,#60a5fa)" : "linear-gradient(135deg,#6b7280,#9ca3af)", borderRadius: 50, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: "#fff", fontWeight: 700 }}>{u.name ? u.name[0] : '?'}</div>
               <div>
                 <div style={{ fontWeight: 700, fontSize: 14 }}>{u.name}</div>
                 <div style={{ fontSize: 12, color: "var(--text2)" }}>{u.email}</div>
               </div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, background: u.role === "Proprietário" ? "rgba(124,58,237,0.15)" : "rgba(59,130,246,0.15)", color: u.role === "Proprietário" ? "var(--accent2)" : "#3b82f6" }}>{u.role}</span>
-              {isOwner && u.role !== "Proprietário" && <button onClick={() => setForm({ ...u })} style={{ background: "rgba(124,58,237,0.1)", color: "var(--accent2)", border: "none", borderRadius: 7, padding: "5px 11px", cursor: "pointer", fontSize: 12, fontFamily: "inherit", fontWeight: 700 }}>Editar</button>}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, background: u.role === "Proprietário" ? "rgba(124,58,237,0.15)" : u.role === "RH" ? "rgba(59,130,246,0.15)" : "rgba(107,114,128,0.15)", color: u.role === "Proprietário" ? "var(--accent2)" : u.role === "RH" ? "#3b82f6" : "#6b7280" }}>{u.role}</span>
+              {isOwner && u.id !== currentUser.id && (
+                <>
+                  <button onClick={() => setForm({ ...u, password: "" })} style={{ background: "rgba(124,58,237,0.1)", color: "var(--accent2)", border: "none", borderRadius: 7, padding: "5px 11px", cursor: "pointer", fontSize: 12, fontFamily: "inherit", fontWeight: 700 }}>✏️ Editar</button>
+                  <button onClick={() => deleteUser(u.id)} style={{ background: "rgba(239,68,68,0.1)", color: "var(--danger)", border: "none", borderRadius: 7, padding: "5px 11px", cursor: "pointer", fontSize: 12, fontFamily: "inherit", fontWeight: 700 }}>🗑 Remover</button>
+                </>
+              )}
             </div>
           </div>
         ))}
@@ -1376,20 +1452,40 @@ function UsersSection({ company, notify, fetchUserData, currentUser }) {
 
       {form && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.72)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setForm(null)}>
-          <div style={{ background: "var(--card)", borderRadius: 20, padding: 30, width: "100%", maxWidth: 420, border: "1px solid var(--border)" }} onClick={e => e.stopPropagation()}>
+          <div style={{ background: "var(--card)", borderRadius: 20, padding: 30, width: "100%", maxWidth: 460, border: "1px solid var(--border)" }} onClick={e => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-              <h2 style={{ margin: 0, fontWeight: 800, fontSize: 19 }}>{form.id ? "Editar" : "Novo Usuário"}</h2>
+              <h2 style={{ margin: 0, fontWeight: 800, fontSize: 19 }}>{form.id ? "Editar Usuário" : "Novo Usuário"}</h2>
               <button onClick={() => setForm(null)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "var(--text2)" }}>✕</button>
             </div>
-            <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "var(--text2)" }}>Nome</label>
+            
+            {!form.id && (
+              <div style={{ background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.2)", borderRadius: 10, padding: "12px 14px", marginBottom: 18, fontSize: 13, color: "var(--text2)", lineHeight: 1.5 }}>
+                ℹ️ O novo usuário receberá email e senha para acessar o sistema com as permissões definidas.
+              </div>
+            )}
+            
+            <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "var(--text2)" }}>Nome *</label>
             <input placeholder="Nome completo" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={inputStyle} />
-            <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "var(--text2)" }}>Email</label>
-            <input type="email" placeholder="email@empresa.com" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} style={inputStyle} />
-            <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "var(--text2)" }}>Permissão</label>
+            
+            <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "var(--text2)" }}>Email *</label>
+            <input type="email" placeholder="email@empresa.com" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} style={inputStyle} disabled={!!form.id} />
+            
+            {!form.id && (
+              <>
+                <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "var(--text2)" }}>Senha *</label>
+                <input type="password" placeholder="Mínimo 6 caracteres" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} style={inputStyle} />
+              </>
+            )}
+            
+            <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "var(--text2)" }}>Permissão *</label>
             <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))} style={inputStyle}>
-              <option>Administrador</option><option>RH</option><option>Visualização</option>
+              <option>RH</option>
+              <option>Visualização</option>
             </select>
-            <button className="btn-primary" style={{ width: "100%", marginTop: 6, padding: "13px" }} onClick={saveUser}>{form.id ? "Salvar" : "Adicionar"}</button>
+            
+            <button className="btn-primary" style={{ width: "100%", marginTop: 8, padding: "13px" }} onClick={saveUser} disabled={saving}>
+              {saving ? "Processando..." : form.id ? "Salvar Alterações" : "Criar Usuário"}
+            </button>
           </div>
         </div>
       )}
@@ -1449,9 +1545,9 @@ function SettingsSection({ company, notify, fetchUserData, currentUser }) {
           <div style={{ padding: "14px 16px", background: "var(--bg3)", borderRadius: 10, marginBottom: 18, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
             <div>
               <div style={{ fontSize: 12, color: "var(--text2)", marginBottom: 3 }}>🔗 Link público da empresa</div>
-              <code style={{ color: "var(--accent2)", fontSize: 13 }}>sistema.com/empresa/{company.slug}</code>
+              <code style={{ color: "var(--accent2)", fontSize: 13 }}>{window.location.origin + '/#/empresa/' + company.slug}</code>
             </div>
-            <button onClick={() => { try { navigator.clipboard.writeText(`sistema.com/empresa/${company.slug}`); } catch(e){} notify("Link copiado!"); }} style={{ background: "rgba(124,58,237,0.12)", color: "var(--accent2)", border: "none", borderRadius: 8, padding: "7px 14px", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 700 }}>📋 Copiar</button>
+            <button onClick={() => { try { navigator.clipboard.writeText(window.location.origin + '/#/empresa/' + company.slug); } catch(e){} notify("Link copiado!"); }} style={{ background: "rgba(124,58,237,0.12)", color: "var(--accent2)", border: "none", borderRadius: 8, padding: "7px 14px", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 700 }}>📋 Copiar</button>
           </div>
           {canEdit && <button className="btn-primary" style={{ padding: "11px 28px" }} onClick={save}>Salvar Alterações</button>}
         </div>

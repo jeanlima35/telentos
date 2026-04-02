@@ -112,6 +112,31 @@ CREATE POLICY "Users can update own profile"
   ON public.users FOR UPDATE
   USING (id = auth.uid());
 
+-- Proprietários podem atualizar outros perfis da mesma empresa
+CREATE POLICY "Owners can update company users"
+  ON public.users FOR UPDATE
+  USING (
+    company_id IN (
+      SELECT company_id FROM public.users 
+      WHERE id = auth.uid() AND role = 'Proprietário'
+    )
+  );
+
+-- Qualquer autenticado pode inserir um perfil (necessário para registro e criação de usuários)
+CREATE POLICY "Authenticated can insert user profiles"
+  ON public.users FOR INSERT
+  WITH CHECK (true);
+
+-- Proprietários podem deletar usuários da mesma empresa
+CREATE POLICY "Owners can delete company users"
+  ON public.users FOR DELETE
+  USING (
+    company_id IN (
+      SELECT company_id FROM public.users 
+      WHERE id = auth.uid() AND role = 'Proprietário'
+    )
+  );
+
 -- --- JOBS (Vagas) ---
 -- Qualquer pessoa pode LER as vagas das empresas que estão com status "Aberta" (para a página pública)
 CREATE POLICY "Public read open jobs"
