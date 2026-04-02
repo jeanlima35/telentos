@@ -257,9 +257,9 @@ function LandingPage({ updateState, isDark, theme, login, setPublicSlug }) {
   ];
 
   const plans = [
-    { name: "Starter", price: "Grátis", period: "para sempre", color: "#10b981", features: ["Até 50 candidatos", "1 usuário", "Página pública", "Kanban básico", "Exportação XLS"], cta: "Começar Grátis" },
-    { name: "Profissional", price: "R$ 49", period: "/mês", color: "#7c3aed", popular: true, features: ["Candidatos ilimitados", "5 usuários", "Página pública personalizada", "Kanban completo", "Exportação XLS + PDF", "Anotações do RH", "Suporte prioritário"], cta: "Assinar Agora" },
-    { name: "Empresarial", price: "R$ 149", period: "/mês", color: "#3b82f6", features: ["Tudo do Profissional", "Usuários ilimitados", "API de integração", "White-label", "Relatórios avançados", "Gerente de sucesso dedicado", "SLA garantido"], cta: "Falar com Vendas" },
+    { name: "Degustação", price: "Grátis", period: "por 7 dias", color: "#10b981", features: ["Acesso total por 7 dias", "1 usuário", "Página pública", "Kanban básico", "Exportação XLS"], cta: "Começar Teste" },
+    { name: "Profissional", price: "R$ 49,90", period: "/mês", color: "#7c3aed", popular: true, features: ["Até 30 candidatos", "5 usuários", "Preço de R$ 69,90 por R$ 49,90", "Kanban completo", "Exportação XLS + PDF", "Anotações do RH", "Suporte prioritário"], cta: "Assinar Agora" },
+    { name: "Ilimitado", price: "R$ 149,00", period: "/mês", color: "#3b82f6", features: ["Candidatos ilimitados", "Usuários ilimitados", "API de integração", "White-label", "Relatórios avançados", "Gerente de sucesso dedicado", "SLA garantido"], cta: "Assinar Ilimitado" },
   ];
 
   const faqs = [
@@ -1507,9 +1507,9 @@ function SettingsSection({ company, notify, fetchUserData, currentUser }) {
   };
 
   const PLANS = [
-    { id: "free", name: "Gratuito", price: "R$ 0", color: "#6b7280", features: ["Até 50 candidatos", "1 usuário", "3 vagas ativas", "Página pública"] },
-    { id: "pro", name: "Pro", price: "R$ 97/mês", color: "#7c3aed", features: ["Candidatos ilimitados", "5 usuários", "Vagas ilimitadas", "Exportar CSV", "Kanban Board", "Suporte prioritário"], recommended: true },
-    { id: "enterprise", name: "Enterprise", price: "Sob consulta", color: "#ec4899", features: ["Tudo do Pro", "Usuários ilimitados", "API de integração", "Domínio próprio", "SLA garantido"] },
+    { id: "free", name: "Degustação", price: "R$ 0", color: "#6b7280", features: ["Grátis por 7 dias", "1 usuário", "Vagas limitadas", "Página pública"] },
+    { id: "pro", name: "Profissional", price: "R$ 49,90/mês", color: "#7c3aed", features: ["Até 30 candidatos", "5 usuários", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Preço promocional"], recommended: true },
+    { id: "enterprise", name: "Ilimitado", price: "R$ 149,00/mês", color: "#ec4899", features: ["Candidatos ilimitados", "Usuários ilimitados", "API de integração", "Suporte exclusivo", "SLA garantido"] },
   ];
 
   return (
