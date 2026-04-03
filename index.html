@@ -215,6 +215,13 @@ function App() {
         .nav-btn{background:transparent;border:1px solid var(--border);border-radius:8px;padding:8px 18px;color:var(--text);cursor:pointer;font-family:'Outfit',sans-serif;font-weight:500;transition:all 0.15s}
         .nav-btn:hover{background:var(--bg3)}
         select option{background:var(--bg3);color:var(--text)}
+        @media (max-width: 640px) {
+          .nav-btn, .btn-primary { width: 100%; padding: 12px !important; }
+          .hero-cta-container { flex-direction: column; width: 100%; }
+          .hero-cta-container button { width: 100%; }
+          nav { padding: 10px 16px !important; height: auto !important; flex-wrap: wrap; justify-content: center !important; gap: 10px; }
+          .nav-actions { width: 100%; justify-content: center; }
+        }
       `}</style>
       <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
 
@@ -259,14 +266,14 @@ function LandingPage({ updateState, isDark, theme, login, setPublicSlug }) {
   const plans = [
     { name: "Degustação", price: "Grátis", period: "por 7 dias", color: "#10b981", features: ["Acesso total por 7 dias", "1 usuário", "Página pública", "Kanban básico", "Exportação XLS"], cta: "Começar Teste" },
     { name: "Profissional", price: "R$ 49,90", period: "/mês", color: "#7c3aed", popular: true, features: ["Até 30 candidatos", "5 usuários", "Preço de R$ 69,90 por R$ 49,90", "Kanban completo", "Exportação XLS + PDF", "Anotações do RH", "Suporte prioritário"], cta: "Assinar Agora" },
-    { name: "Ilimitado", price: "R$ 149,00", period: "/mês", color: "#3b82f6", features: ["Candidatos ilimitados", "Usuários ilimitados", "API de integração", "White-label", "Relatórios avançados", "Gerente de sucesso dedicado", "SLA garantido"], cta: "Assinar Ilimitado" },
+    { name: "Ilimitado", price: "R$ 149,00", period: "/mês", color: "#3b82f6", features: ["Candidatos ilimitados", "Usuários ilimitados", "Kanban completo", "Exportação XLS + PDF", "Anotações do RH", "Suporte prioritário"], cta: "Assinar Ilimitado" },
   ];
 
   const faqs = [
     { q: "Preciso instalar alguma coisa?", a: "Não! O Banco de Talentos Pro é 100% online. Basta criar sua conta e começar a usar direto do navegador, em qualquer dispositivo." },
     { q: "Como funciona a página pública?", a: "Ao criar sua empresa, geramos um link exclusivo (ex: sistema.com/empresa/sua-empresa). Compartilhe com candidatos e eles podem se inscrever nas vagas sem precisar de login." },
     { q: "Posso exportar os dados dos candidatos?", a: "Sim! Oferecemos exportação em Excel (XLS) e PDF. Basta ir à seção Banco de Talentos e clicar nos botões de exportação." },
-    { q: "É seguro? Onde ficam meus dados?", a: "Utilizamos o Supabase, infraestrutura enterprise-grade com PostgreSQL, criptografia em repouso, SSL e políticas de Row Level Security (RLS) para garantir isolamento total dos dados entre empresas." },
+    { q: "É seguro? Onde ficam meus dados?", a: "Utilizamos infraestrutura enterprise-grade com banco de dados seguro, criptografia em repouso, SSL e políticas de Row Level Security (RLS) para garantir isolamento total dos dados entre empresas." },
     { q: "Posso adicionar minha equipe de RH?", a: "Claro! Na seção Usuários do dashboard, você pode convidar colaboradores com diferentes níveis de permissão: Proprietário, RH ou Visualização." },
   ];
 
@@ -297,7 +304,7 @@ function LandingPage({ updateState, isDark, theme, login, setPublicSlug }) {
           <div style={{ width: 36, height: 36, background: "linear-gradient(135deg,#7c3aed,#a855f7)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 900, fontSize: 16 }}>B</div>
           <span style={{ fontWeight: 800, fontSize: 18, background: "linear-gradient(135deg,var(--accent2),var(--accent3))", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Banco de Talentos Pro</span>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }} className="nav-actions">
           <button onClick={() => updateState({ theme: theme === "dark" ? "light" : "dark" })} style={{ background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 17 }}>{isDark ? "☀️" : "🌙"}</button>
           <button className="nav-btn" onClick={() => setShowLogin(!showLogin)}>Entrar</button>
           <button className="btn-primary" onClick={() => updateState({ view: "register-account" })}>Começar Agora</button>
@@ -341,7 +348,7 @@ function LandingPage({ updateState, isDark, theme, login, setPublicSlug }) {
           <p style={{ fontSize: "clamp(16px,2vw,20px)", color: "var(--text2)", lineHeight: 1.7, margin: "0 auto 44px", maxWidth: 600 }}>
             Centralize candidatos, gerencie vagas, acompanhe processos seletivos com Kanban e receba candidaturas por link público. Tudo em uma plataforma moderna e segura.
           </p>
-          <div style={{ display: "flex", gap: 14, justifyContent: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 14, justifyContent: "center", flexWrap: "wrap" }} className="hero-cta-container">
             <button className="btn-primary" style={{ fontSize: 17, padding: "16px 38px", animation: "pulse-glow 3s infinite" }} onClick={() => updateState({ view: "register-account" })}>Criar Conta Grátis →</button>
             <button className="nav-btn" style={{ fontSize: 15, padding: "14px 28px" }} onClick={() => { const el = document.getElementById('features-section'); el && el.scrollIntoView({behavior:'smooth'}); }}>Ver Funcionalidades ↓</button>
           </div>
@@ -1573,7 +1580,7 @@ function SettingsSection({ company, notify, fetchUserData, currentUser }) {
   const PLANS = [
     { id: "free", name: "Degustação", price: "R$ 0", color: "#6b7280", features: ["Grátis por 7 dias", "1 usuário", "Vagas limitadas", "Página pública"] },
     { id: "pro", name: "Profissional", price: "R$ 49,90/mês", color: "#7c3aed", features: ["Até 30 candidatos", "5 usuários", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Preço promocional"], recommended: true },
-    { id: "enterprise", name: "Ilimitado", price: "R$ 149,00/mês", color: "#ec4899", features: ["Candidatos ilimitados", "Usuários ilimitados", "API de integração", "Suporte exclusivo", "SLA garantido"] },
+    { id: "enterprise", name: "Ilimitado", price: "R$ 149,00/mês", color: "#ec4899", features: ["Candidatos ilimitados", "Usuários ilimitados", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Suporte prioritário"] },
   ];
 
   return (
