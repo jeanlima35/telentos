@@ -16,6 +16,7 @@
     <!-- jsPDF for PDF -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.5.0/css/font-awesome.min.css">
     <style>
       body { margin: 0; padding: 0; font-family: sans-serif; }
     </style>
@@ -500,7 +501,7 @@ function LandingPage({ updateState, isDark, theme, login, setPublicSlug }) {
             </div>
           </div>
           <div style={{ borderTop: "1px solid var(--border)", paddingTop: 20, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-            <span style={{ fontSize: 12, color: "var(--text2)" }}>© 2026 Banco de Talentos Pro. Todos os direitos reservados.</span>
+            <span style={{ fontSize: 12, color: "var(--text2)" }}>© 2026 Banco de Talentos Pro. Todos os direitos reservados. | Desenvolvido por Sistemabox Sistemas de Gestão LTDA</span>
             <div style={{ display: "flex", gap: 16 }}>
               {["LinkedIn", "Instagram", "Twitter"].map(s => (
                 <span key={s} style={{ fontSize: 12, color: "var(--text2)", cursor: "pointer", fontWeight: 500 }}>{s}</span>
@@ -509,6 +510,9 @@ function LandingPage({ updateState, isDark, theme, login, setPublicSlug }) {
           </div>
         </div>
       </footer>
+      <a href="https://wa.me/qr/FSFWSHQ2IQSYB1" style={{ position:"fixed", width:"60px", height:"60px", bottom:"40px", right:"40px", backgroundColor:"#25d366", color:"#FFF", borderRadius:"50px", textAlign:"center", fontSize:"30px", boxShadow: "1px 1px 2px #888", zIndex:1000 }} target="_blank">
+        <i style={{ marginTop:"16px" }} className="fa fa-whatsapp"></i>
+      </a>
     </div>
   );
 }
