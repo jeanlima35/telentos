@@ -1642,9 +1642,35 @@ function SettingsSection({ company, notify, fetchUserData, currentUser, isRestri
 
   const handleSubscribe = async (plan) => {
     if (plan.id === "free" || !plan.stripeUrl) return;
+
+    // Se já tiver uma assinatura ativa, enviamos para o Portal de Gerenciamento
+    if (company.subscription_status === 'active' && company.stripe_customer_id) {
+      if (!window.confirm("Você já possui um plano ativo. Deseja abrir o painel do Stripe para alterar seu plano ou cancelar?")) return;
+      
+      notify("Abrindo painel de gerenciamento...", "info");
+      try {
+        const { data, error } = await supabase.functions.invoke('create-portal-session', {
+          body: { 
+            customerId: company.stripe_customer_id, 
+            returnUrl: window.location.href 
+          }
+        });
+
+        if (error) throw error;
+        if (data?.url) {
+          window.location.href = data.url;
+        } else {
+          throw new Error("Não foi possível gerar o link do portal.");
+        }
+      } catch (err) {
+        console.error("Portal Error:", err);
+        notify("Erro ao abrir portal: " + err.message, "error");
+      }
+      return;
+    }
+
+    // Fluxo normal para quem ainda não é assinante
     notify("Redirecionando para o Checkout Seguro...", "info");
-    
-    // Passamos o email logado e o ID da empresa para o Stripe já abrir preenchido
     const checkoutUrl = `${plan.stripeUrl}?client_reference_id=${company.id}&prefilled_email=${encodeURIComponent(currentUser.email)}`;
     
     setTimeout(() => {
