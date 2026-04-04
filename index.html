@@ -121,6 +121,19 @@ function App() {
     fetchSession();
   }, []);
 
+  // Monitorar retorno do Stripe para mensagem de sucesso
+  useEffect(() => {
+    if (window.location.hash.includes('subscribed=true')) {
+      // Pequeno delay para garantir que o Dashboard carregou
+      setTimeout(() => {
+        notify("🎉 Parabéns! Sua assinatura foi ativada com sucesso. Seja bem-vindo ao Plano Pro!", "success");
+        // Remove o parâmetro da URL para não repetir o alerta ao dar F5
+        const newHash = window.location.hash.replace(/[?&]subscribed=true/, '');
+        window.history.replaceState(null, '', window.location.pathname + window.location.search + newHash);
+      }, 1000);
+    }
+  }, [window.location.hash]);
+
   const fetchUserData = async (user) => {
     // Buscar perfil do banco
     const { data: profile } = await supabase.from('users').select('*').eq('id', user.id).single();
