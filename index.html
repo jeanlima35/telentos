@@ -1623,43 +1623,20 @@ function SettingsSection({ company, notify, fetchUserData, currentUser, isRestri
 
   const PLANS = [
     { id: "free", name: "Degustação", price: "R$ 0", color: "#6b7280", features: ["Grátis por 7 dias", "1 usuário", "Vagas limitadas", "Página pública"] },
-    { id: "pro", name: "Profissional", price: "R$ 49,90/mês", color: "#7c3aed", features: ["Até 30 candidatos", "5 usuários", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Preço promocional"], recommended: true, stripeId: "prod_UGGAIjG5Pmv8a5" },
-    { id: "enterprise", name: "Ilimitado", price: "R$ 149,00/mês", color: "#ec4899", features: ["Candidatos ilimitados", "Usuários ilimitados", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Suporte prioritário"], stripeId: "prod_UGGDe7sVkGFBir" },
+    { id: "pro", name: "Profissional", price: "R$ 49,90/mês", color: "#7c3aed", features: ["Até 30 candidatos", "5 usuários", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Preço promocional"], recommended: true, stripeUrl: "https://buy.stripe.com/test_00wfZi3PH71p7M0ate0VO00" },
+    { id: "enterprise", name: "Ilimitado", price: "R$ 149,00/mês", color: "#ec4899", features: ["Candidatos ilimitados", "Usuários ilimitados", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Suporte prioritário"], stripeUrl: "https://buy.stripe.com/test_fZu4gA2LD71p6HW9pa0VO01" },
   ];
 
   const handleSubscribe = async (plan) => {
-    if (plan.id === "free") return;
-    notify("Iniciando checkout seguro...", "info");
+    if (plan.id === "free" || !plan.stripeUrl) return;
+    notify("Redirecionando para o Checkout Seguro...", "info");
     
-    try {
-      // Chamada para a Supabase Edge Function que cria a sessão do Stripe
-      const { data, error: invokeError } = await supabase.functions.invoke('create-checkout-session', {
-        body: { 
-          planId: plan.stripeId, 
-          companyId: company.id,
-          successUrl: window.location.origin + "/#/settings?tab=plano&session_id={CHECKOUT_SESSION_ID}",
-          cancelUrl: window.location.origin + "/#/settings?tab=plano"
-        }
-      });
-
-      if (invokeError) throw invokeError;
-      
-      // Se a função retornar um erro no corpo (ex: preço não encontrado)
-      if (data?.error) {
-        throw new Error(data.error);
-      }
-
-      if (data?.url) {
-        window.location.href = data.url;
-      } else {
-        throw new Error("Não foi possível gerar a URL de checkout.");
-      }
-    } catch (err) {
-      console.error("Stripe Checkout Error:", err);
-      // Mostra o erro real para o usuário reportar
-      const msg = err.message || JSON.stringify(err);
-      notify("Erro: " + msg, "error");
-    }
+    // O client_reference_id permite que o Stripe avise o Supabase EXATAMENTE quem pagou
+    const checkoutUrl = `${plan.stripeUrl}?client_reference_id=${company.id}`;
+    
+    setTimeout(() => {
+      window.location.href = checkoutUrl;
+    }, 800);
   };
 
   return (
