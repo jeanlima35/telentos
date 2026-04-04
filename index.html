@@ -1631,8 +1631,8 @@ function SettingsSection({ company, notify, fetchUserData, currentUser, isRestri
     if (plan.id === "free" || !plan.stripeUrl) return;
     notify("Redirecionando para o Checkout Seguro...", "info");
     
-    // O client_reference_id permite que o Stripe avise o Supabase EXATAMENTE quem pagou
-    const checkoutUrl = `${plan.stripeUrl}?client_reference_id=${company.id}`;
+    // Passamos o email logado e o ID da empresa para o Stripe já abrir preenchido
+    const checkoutUrl = `${plan.stripeUrl}?client_reference_id=${company.id}&prefilled_email=${encodeURIComponent(currentUser.email)}`;
     
     setTimeout(() => {
       window.location.href = checkoutUrl;
