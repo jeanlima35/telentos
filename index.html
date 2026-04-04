@@ -821,16 +821,24 @@ function Dashboard({ state, updateState, isDark, theme, logout, notify, section,
         <nav style={{ flex: 1, padding: "10px 7px" }}>
           {navItems.map(item => {
             const isDisabled = isRestricted && item.id !== "settings";
+            const isActive = section === item.id;
             return (
               <button 
                 key={item.id} 
-                onClick={() => !isDisabled && setSection(item.id)} 
+                onClick={() => {
+                  if (isDisabled) {
+                    notify("Acesso Restrito: Sua conta está em atraso ou o trial expirou. Por favor, regularize na aba Plano.", "error");
+                    setSection("settings");
+                    return;
+                  }
+                  setSection(item.id);
+                }} 
                 style={{ 
                   width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "10px 11px", borderRadius: 9, border: "none", 
-                  background: section === item.id ? "rgba(124,58,237,0.18)" : "transparent", 
-                  color: isDisabled ? "var(--text3)" : (section === item.id ? "var(--accent2)" : "var(--text2)"), 
-                  cursor: isDisabled ? "not-allowed" : "pointer", opacity: isDisabled ? 0.5 : 1,
-                  fontFamily: "'Outfit',sans-serif", fontWeight: section === item.id ? 700 : 400, fontSize: 14, textAlign: "left", marginBottom: 2, transition: "all 0.15s", overflow: "hidden" 
+                  background: isActive ? "rgba(124,58,237,0.18)" : "transparent", 
+                  color: isDisabled ? "var(--text3)" : (isActive ? "var(--accent2)" : "var(--text2)"), 
+                  cursor: isDisabled ? "not-allowed" : "pointer", opacity: isDisabled ? 0.4 : 1,
+                  fontFamily: "'Outfit',sans-serif", fontWeight: isActive ? 700 : 400, fontSize: 14, textAlign: "left", marginBottom: 2, transition: "all 0.15s", overflow: "hidden" 
                 }}
               >
                 <span style={{ fontSize: 17, minWidth: 20, textAlign: "center" }}>{item.icon}</span>
@@ -1615,21 +1623,43 @@ function SettingsSection({ company, notify, fetchUserData, currentUser, isRestri
 
   const PLANS = [
     { id: "free", name: "Degustação", price: "R$ 0", color: "#6b7280", features: ["Grátis por 7 dias", "1 usuário", "Vagas limitadas", "Página pública"] },
-    { id: "pro", name: "Profissional", price: "R$ 49,90/mês", color: "#7c3aed", features: ["Até 30 candidatos", "5 usuários", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Preço promocional"], recommended: true },
-    { id: "enterprise", name: "Ilimitado", price: "R$ 149,00/mês", color: "#ec4899", features: ["Candidatos ilimitados", "Usuários ilimitados", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Suporte prioritário"] },
+    { id: "pro", name: "Profissional", price: "R$ 49,90/mês", color: "#7c3aed", features: ["Até 30 candidatos", "5 usuários", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Preço promocional"], recommended: true, stripeId: "prod_UGGAIjG5Pmv8a5" },
+    { id: "enterprise", name: "Ilimitado", price: "R$ 149,00/mês", color: "#ec4899", features: ["Candidatos ilimitados", "Usuários ilimitados", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Suporte prioritário"], stripeId: "prod_UGGDe7sVkGFBir" },
   ];
 
   const handleSubscribe = async (plan) => {
     if (plan.id === "free") return;
-    const { error } = await supabase.from('companies').update({ 
-      subscription_plan: plan.name, 
-      subscription_status: 'active',
-      trial_ends_at: null 
-    }).eq('id', company.id);
+    notify("Iniciando checkout seguro...", "info");
     
-    if (error) { notify("Erro ao assinar: " + error.message, "error"); return; }
-    notify(`Plano ${plan.name} ativado com sucesso! (Simulação)`);
-    await fetchUserData();
+    try {
+      // Chamada para a Supabase Edge Function que cria a sessão do Stripe
+      const { data, error: invokeError } = await supabase.functions.invoke('create-checkout-session', {
+        body: { 
+          planId: plan.stripeId, 
+          companyId: company.id,
+          successUrl: window.location.origin + "/#/settings?tab=plano&session_id={CHECKOUT_SESSION_ID}",
+          cancelUrl: window.location.origin + "/#/settings?tab=plano"
+        }
+      });
+
+      if (invokeError) throw invokeError;
+      
+      // Se a função retornar um erro no corpo (ex: preço não encontrado)
+      if (data?.error) {
+        throw new Error(data.error);
+      }
+
+      if (data?.url) {
+        window.location.href = data.url;
+      } else {
+        throw new Error("Não foi possível gerar a URL de checkout.");
+      }
+    } catch (err) {
+      console.error("Stripe Checkout Error:", err);
+      // Mostra o erro real para o usuário reportar
+      const msg = err.message || JSON.stringify(err);
+      notify("Erro: " + msg, "error");
+    }
   };
 
   return (
