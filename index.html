@@ -16,6 +16,7 @@
     <!-- jsPDF for PDF -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://js.stripe.com/v3/"></script>
     <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.5.0/css/font-awesome.min.css">
     <style>
       body { margin: 0; padding: 0; font-family: sans-serif; }
@@ -30,6 +31,11 @@ const { useState, useEffect, useRef, useCallback } = React;
 const SUPABASE_URL = 'https://vblqbgxwmjhfqkzcpnrh.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_JkUUK7Er8mL-YCabWPeMsg_LKsSBlku';
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const STRIPE_PK = 'pk_test_51TH6a6LDRkZ3KNvEPiQEgFm5e41JEVxf0pn4EyUQy2N9sxdLT5FDoN9vNXbw3swGMzQQpv62OYxe6O7y3mzSukqV008nAKYbfU';
+// A Secret Key NÃO deve ser colocada aqui no frontend por segurança.
+// Use Supabase Edge Functions para processar pagamentos com a Secret Key.
+const stripe = window.Stripe ? window.Stripe(STRIPE_PK) : null;
 // ────────────────────────────────────────────────────────────────────────────
 
 const STATUS_CONFIG = {
@@ -128,12 +134,20 @@ function App() {
     // Buscar empresa
     const { data: company } = await supabase.from('companies').select('*, jobs(*), candidates(*, candidate_notes(*)), users(*)').eq('id', profile.company_id).single();
     
+    // Calcular se a conta está ativa (assinatura ou trial)
+    const now = new Date();
+    const trialDate = company?.trial_ends_at ? new Date(company.trial_ends_at) : now;
+    const isTrialing = (company?.subscription_status === 'trialing' || !company?.subscription_status) && trialDate > now;
+    const isActive = company?.subscription_status === 'active';
+    const isRestricted = !isActive && !isTrialing;
+
     setState(s => ({
       ...s,
       currentUser: profile,
       currentCompany: company || null,
       view: profile.role === "SuperAdmin" ? "super-admin" : "dashboard",
-      loading: false
+      loading: false,
+      isRestricted
     }));
       
     if (company) {
@@ -638,6 +652,13 @@ function PublicCompanyPage({ updateState, isDark, slug, notify }) {
     if (!company) return;
     if (!form.consent) { notify("Você precisa aceitar os termos de uso de dados", "error"); return; }
     
+    // Verificar limite do plano (para plano Profissional)
+    const { data: currentComp } = await supabase.from('companies').select('*, candidates(*)').eq('id', company.id).single();
+    if (currentComp && currentComp.subscription_plan === 'Profissional' && (currentComp.candidates || []).length >= 30) {
+      notify("Limite de 30 candidatos atingido para o plano Profissional. A empresa precisa atualizar o plano.", "error");
+      return;
+    }
+    
     setSubmitting(true);
     let resumePath = null;
     
@@ -757,12 +778,18 @@ function PublicCompanyPage({ updateState, isDark, slug, notify }) {
 
 // ─── DASHBOARD ─────────────────────────────────────────────────────────────
 function Dashboard({ state, updateState, isDark, theme, logout, notify, section, setSection, fetchUserData, setPublicSlug, exportXLS, exportPDF }) {
-  const { currentUser } = state;
-  const company = state.currentCompany;
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const { currentUser, currentCompany: company, isRestricted } = state;
+  const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 1024);
   const [showProfile, setShowProfile] = useState(false);
 
-  if (!company) return <div style={{ padding: 40 }}>Empresa não encontrada.</div>;
+  // Se estiver restrito (trial vencido ou pagamento pendente), forçar aba de planos
+  useEffect(() => {
+    if (isRestricted && section !== "settings") {
+      setSection("settings");
+    }
+  }, [isRestricted, section]);
+
+  if (!currentUser || !company) return null;
 
   const stats = {
     total: company.candidates?.length || 0,
@@ -792,12 +819,25 @@ function Dashboard({ state, updateState, isDark, theme, logout, notify, section,
           </div>}
         </div>
         <nav style={{ flex: 1, padding: "10px 7px" }}>
-          {navItems.map(item => (
-            <button key={item.id} onClick={() => setSection(item.id)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "10px 11px", borderRadius: 9, border: "none", background: section === item.id ? "rgba(124,58,237,0.18)" : "transparent", color: section === item.id ? "var(--accent2)" : "var(--text2)", cursor: "pointer", fontFamily: "'Outfit',sans-serif", fontWeight: section === item.id ? 700 : 400, fontSize: 14, textAlign: "left", marginBottom: 2, transition: "all 0.15s", overflow: "hidden" }}>
-              <span style={{ fontSize: 17, minWidth: 20, textAlign: "center" }}>{item.icon}</span>
-              {sidebarOpen && <span style={{ whiteSpace: "nowrap" }}>{item.label}</span>}
-            </button>
-          ))}
+          {navItems.map(item => {
+            const isDisabled = isRestricted && item.id !== "settings";
+            return (
+              <button 
+                key={item.id} 
+                onClick={() => !isDisabled && setSection(item.id)} 
+                style={{ 
+                  width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "10px 11px", borderRadius: 9, border: "none", 
+                  background: section === item.id ? "rgba(124,58,237,0.18)" : "transparent", 
+                  color: isDisabled ? "var(--text3)" : (section === item.id ? "var(--accent2)" : "var(--text2)"), 
+                  cursor: isDisabled ? "not-allowed" : "pointer", opacity: isDisabled ? 0.5 : 1,
+                  fontFamily: "'Outfit',sans-serif", fontWeight: section === item.id ? 700 : 400, fontSize: 14, textAlign: "left", marginBottom: 2, transition: "all 0.15s", overflow: "hidden" 
+                }}
+              >
+                <span style={{ fontSize: 17, minWidth: 20, textAlign: "center" }}>{item.icon}</span>
+                {sidebarOpen && <span style={{ whiteSpace: "nowrap" }}>{item.label}</span>}
+              </button>
+            );
+          })}
         </nav>
         <div style={{ padding: "10px 7px", borderTop: "1px solid var(--border)" }}>
           <button onClick={() => { setPublicSlug(company.slug); updateState({ view: "public-company" }); }} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "10px 11px", borderRadius: 9, border: "none", background: "transparent", color: "var(--text2)", cursor: "pointer", fontFamily: "'Outfit',sans-serif", fontSize: 14, marginBottom: 2, overflow: "hidden" }}>
@@ -848,7 +888,7 @@ function Dashboard({ state, updateState, isDark, theme, logout, notify, section,
           {section === "kanban" && <KanbanSection company={company} fetchUserData={fetchUserData} notify={notify} currentUser={currentUser} />}
           {section === "jobs" && <JobsSection company={company} fetchUserData={fetchUserData} notify={notify} currentUser={currentUser} />}
           {section === "users" && <UsersSection company={company} fetchUserData={fetchUserData} notify={notify} currentUser={currentUser} />}
-          {section === "settings" && <SettingsSection company={company} fetchUserData={fetchUserData} notify={notify} currentUser={currentUser} />}
+          {section === "settings" && <SettingsSection company={company} fetchUserData={fetchUserData} notify={notify} currentUser={currentUser} isRestricted={isRestricted} />}
         </div>
       </main>
     </div>
@@ -1405,21 +1445,21 @@ function UsersSection({ company, notify, fetchUserData, currentUser }) {
 
   const saveUser = async () => {
     if (!form.name || !form.email) { notify("Nome e email obrigatórios", "error"); return; }
+    
+    if (!form.id && company.subscription_plan === 'Profissional' && (company.users || []).length >= 5) {
+      return notify("Limite de 5 usuários atingido para o plano Profissional.", "error");
+    }
+
     setSaving(true);
     try {
       if (form.id) {
-        // Editar usuário existente
         const { error } = await supabase.from('users').update({ name: form.name, role: form.role }).eq('id', form.id);
         if (error) { notify("Erro ao atualizar: " + error.message, "error"); setSaving(false); return; }
         notify("Usuário atualizado!");
       } else {
-        // Criar novo usuário: primeiro registrar no Supabase Auth, depois criar perfil
         if (!form.password || form.password.length < 6) { notify("Senha obrigatória (mínimo 6 caracteres)", "error"); setSaving(false); return; }
         
-        // Salvar sessão atual do proprietário
         const { data: { session: ownerSession } } = await supabase.auth.getSession();
-        
-        // Criar conta do novo usuário no Supabase Auth
         const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ 
           email: form.email, 
           password: form.password 
@@ -1431,13 +1471,6 @@ function UsersSection({ company, notify, fetchUserData, currentUser }) {
           return; 
         }
         
-        if (!signUpData.user) {
-          notify("Erro: não foi possível criar o usuário", "error");
-          setSaving(false);
-          return;
-        }
-        
-        // Inserir perfil na tabela public.users
         const { error: profileError } = await supabase.from('users').insert([{ 
           id: signUpData.user.id, 
           email: form.email, 
@@ -1452,7 +1485,6 @@ function UsersSection({ company, notify, fetchUserData, currentUser }) {
           return; 
         }
         
-        // Restaurar sessão do proprietário (signUp pode alterar a sessão)
         if (ownerSession) {
           await supabase.auth.setSession({
             access_token: ownerSession.access_token,
@@ -1460,7 +1492,7 @@ function UsersSection({ company, notify, fetchUserData, currentUser }) {
           });
         }
         
-        notify("Usuário criado com sucesso! Ele pode fazer login com o email e senha definidos.");
+        notify("Usuário criado com sucesso!");
       }
       await fetchUserData();
       setForm(null);
@@ -1568,9 +1600,9 @@ function UsersSection({ company, notify, fetchUserData, currentUser }) {
   );
 }
 
-function SettingsSection({ company, notify, fetchUserData, currentUser }) {
+function SettingsSection({ company, notify, fetchUserData, currentUser, isRestricted }) {
   const [form, setForm] = useState({ name: company.name, phone: company.phone || "", city: company.city, state: company.state || "" });
-  const [tab, setTab] = useState("empresa"); // empresa | plano | danger
+  const [tab, setTab] = useState(isRestricted ? "plano" : "empresa"); // empresa | plano | danger
   const canEdit = currentUser.role !== "Visualização";
   const isOwner = currentUser.role === "Proprietário";
 
@@ -1586,6 +1618,19 @@ function SettingsSection({ company, notify, fetchUserData, currentUser }) {
     { id: "pro", name: "Profissional", price: "R$ 49,90/mês", color: "#7c3aed", features: ["Até 30 candidatos", "5 usuários", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Preço promocional"], recommended: true },
     { id: "enterprise", name: "Ilimitado", price: "R$ 149,00/mês", color: "#ec4899", features: ["Candidatos ilimitados", "Usuários ilimitados", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Suporte prioritário"] },
   ];
+
+  const handleSubscribe = async (plan) => {
+    if (plan.id === "free") return;
+    const { error } = await supabase.from('companies').update({ 
+      subscription_plan: plan.name, 
+      subscription_status: 'active',
+      trial_ends_at: null 
+    }).eq('id', company.id);
+    
+    if (error) { notify("Erro ao assinar: " + error.message, "error"); return; }
+    notify(`Plano ${plan.name} ativado com sucesso! (Simulação)`);
+    await fetchUserData();
+  };
 
   return (
     <div style={{ maxWidth: 680 }}>
@@ -1630,21 +1675,28 @@ function SettingsSection({ company, notify, fetchUserData, currentUser }) {
 
       {tab === "plano" && (
         <div>
-          <p style={{ color: "var(--text2)", marginBottom: 20, fontSize: 14 }}>Escolha o plano ideal para o tamanho da sua equipe.</p>
+          <p style={{ color: "var(--text2)", marginBottom: 20, fontSize: 14 }}>Sua conta está atualmente no plano: <strong style={{color: "var(--accent2)"}}>{company.subscription_plan || "Degustação"}</strong> ({company.subscription_status === 'active' ? 'Ativo' : 'Trial'})</p>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))", gap: 16 }}>
-            {PLANS.map(plan => (
-              <div key={plan.id} style={{ background: "var(--card)", border: `2px solid ${plan.recommended ? plan.color : "var(--border)"}`, borderRadius: 16, padding: "22px 20px", position: "relative", transition: "transform 0.2s" }} className="card-hover">
-                {plan.recommended && <div style={{ position: "absolute", top: -12, left: "50%", transform: "translateX(-50%)", background: plan.color, color: "#fff", fontSize: 11, fontWeight: 700, padding: "3px 12px", borderRadius: 10, whiteSpace: "nowrap" }}>⭐ RECOMENDADO</div>}
-                <div style={{ fontWeight: 800, fontSize: 18, color: plan.color, marginBottom: 4 }}>{plan.name}</div>
-                <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 16 }}>{plan.price}</div>
-                <ul style={{ listStyle: "none", padding: 0, margin: "0 0 20px" }}>
-                  {plan.features.map(f => <li key={f} style={{ fontSize: 13, color: "var(--text2)", marginBottom: 7, display: "flex", alignItems: "center", gap: 7 }}><span style={{ color: plan.color, fontWeight: 700 }}>✓</span>{f}</li>)}
-                </ul>
-                <button style={{ width: "100%", padding: "10px", borderRadius: 10, border: `1px solid ${plan.color}`, background: plan.recommended ? plan.color : "transparent", color: plan.recommended ? "#fff" : plan.color, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 13 }} onClick={() => notify("Redirecionando para checkout... (em breve!)")}>
-                  {plan.id === "free" ? "Plano Atual" : "Assinar Agora"}
-                </button>
-              </div>
-            ))}
+            {PLANS.map(plan => {
+              const isCurrent = company.subscription_plan === plan.name;
+              return (
+                <div key={plan.id} style={{ background: "var(--card)", border: `2px solid ${isCurrent ? plan.color : "var(--border)"}`, borderRadius: 16, padding: "22px 20px", position: "relative", transition: "transform 0.2s" }} className="card-hover">
+                  {plan.recommended && <div style={{ position: "absolute", top: -12, left: "50%", transform: "translateX(-50%)", background: plan.color, color: "#fff", fontSize: 11, fontWeight: 700, padding: "3px 12px", borderRadius: 10, whiteSpace: "nowrap" }}>⭐ RECOMENDADO</div>}
+                  <div style={{ fontWeight: 800, fontSize: 18, color: plan.color, marginBottom: 4 }}>{plan.name}</div>
+                  <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 16 }}>{plan.price}</div>
+                  <ul style={{ listStyle: "none", padding: 0, margin: "0 0 20px" }}>
+                    {plan.features.map(f => <li key={f} style={{ fontSize: 13, color: "var(--text2)", marginBottom: 7, display: "flex", alignItems: "center", gap: 7 }}><span style={{ color: plan.color, fontWeight: 700 }}>✓</span>{f}</li>)}
+                  </ul>
+                  <button 
+                    style={{ width: "100%", padding: "10px", borderRadius: 10, border: `1px solid ${plan.color}`, background: isCurrent ? "var(--bg3)" : (plan.recommended ? plan.color : "transparent"), color: isCurrent ? "var(--text2)" : (plan.recommended ? "#fff" : plan.color), cursor: isCurrent ? "default" : "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 13 }} 
+                    onClick={() => handleSubscribe(plan)}
+                    disabled={isCurrent}
+                  >
+                    {isCurrent ? "Plano Atual" : "Assinar Agora"}
+                  </button>
+                </div>
+              );
+            })}
           </div>
           <div style={{ marginTop: 20, padding: "16px 20px", background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, fontSize: 13, color: "var(--text2)" }}>
             💳 Pagamentos processados com segurança. Cancele a qualquer momento. Dúvidas? <span style={{ color: "var(--accent2)", cursor: "pointer", fontWeight: 600 }}>jean-lima19@hotmail.com</span>
