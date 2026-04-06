@@ -293,8 +293,8 @@ function LandingPage({ updateState, isDark, theme, login, setPublicSlug }) {
 
   const plans = [
     { name: "Degustação", price: "Grátis", period: "por 7 dias", color: "#10b981", features: ["Acesso total por 7 dias", "1 usuário", "Página pública", "Kanban básico", "Exportação XLS"], cta: "Começar Teste" },
-    { name: "Profissional", price: "R$ 49,90", period: "/mês", color: "#7c3aed", popular: true, features: ["Até 30 candidatos", "5 usuários", "Preço de R$ 69,90 por R$ 49,90", "Kanban completo", "Exportação XLS + PDF", "Anotações do RH", "Suporte prioritário"], cta: "Assinar Agora" },
-    { name: "Ilimitado", price: "R$ 149,00", period: "/mês", color: "#3b82f6", features: ["Candidatos ilimitados", "Usuários ilimitados", "Kanban completo", "Exportação XLS + PDF", "Anotações do RH", "Suporte prioritário"], cta: "Assinar Ilimitado" },
+    { name: "Profissional", price: "R$ 49,90", period: "/mês", color: "#7c3aed", popular: true, features: ["Até 30 candidatos", "5 usuários", "Acesso ilimitado a vagas", "Kanban completo", "Exportação XLS + PDF", "Anotações do RH", "Suporte prioritário"], cta: "Assinar Agora" },
+    { name: "Ilimitado", price: "R$ 149,00", period: "/mês", color: "#3b82f6", features: ["Candidatos ilimitados", "Usuários ilimitados", "Vagas ilimitadas", "Kanban completo", "Exportação XLS + PDF", "Anotações do RH", "Suporte prioritário"], cta: "Assinar Ilimitado" },
   ];
 
   const faqs = [
@@ -828,7 +828,11 @@ function Dashboard({ state, updateState, isDark, theme, logout, notify, section,
           <div style={{ width: 36, height: 36, minWidth: 36, background: "linear-gradient(135deg,#7c3aed,#a855f7)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: "#fff", fontWeight: 900 }}>{(company.name && company.name[0]) || 'E'}</div>
           {sidebarOpen && <div style={{ overflow: "hidden" }}>
             <div style={{ fontWeight: 700, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{company.name}</div>
-            <div style={{ fontSize: 11, color: "var(--text2)" }}>{currentUser.role}</div>
+            <div style={{ fontSize: 11, color: "var(--text2)" }}>
+              {currentUser.role} • <span style={{ color: "#a855f7", fontWeight: 800, border: "2px solid red", padding: "0 4px", borderRadius: 4 }}>
+                {company.subscription_plan || (company.subscription_status === 'active' ? "Ativo" : "Gratuito")}
+              </span>
+            </div>
           </div>}
         </div>
         <nav style={{ flex: 1, padding: "10px 7px" }}>
@@ -891,7 +895,12 @@ function Dashboard({ state, updateState, isDark, theme, logout, notify, section,
                 <div style={{ padding: "10px 14px 12px", borderBottom: "1px solid var(--border)" }}>
                   <div style={{ fontWeight: 700, fontSize: 14 }}>{currentUser.name}</div>
                   <div style={{ fontSize: 12, color: "var(--text2)" }}>{currentUser.email}</div>
-                  <span style={{ marginTop: 5, display: "inline-block", padding: "2px 9px", borderRadius: 12, fontSize: 11, fontWeight: 700, background: "rgba(124,58,237,0.15)", color: "var(--accent2)" }}>{currentUser.role}</span>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 5 }}>
+                    <span style={{ padding: "2px 9px", borderRadius: 12, fontSize: 11, fontWeight: 700, background: "rgba(124,58,237,0.15)", color: "var(--accent2)" }}>{currentUser.role}</span>
+                    <span style={{ padding: "2px 9px", borderRadius: 12, fontSize: 11, fontWeight: 700, background: company.subscription_status === 'active' ? "rgba(16,185,129,0.15)" : "rgba(107,114,128,0.15)", color: company.subscription_status === 'active' ? "#10b981" : "#9ca3af" }}>
+                      {company.subscription_plan || (company.subscription_status === 'active' ? "Ativo" : "Gratuito")}
+                    </span>
+                  </div>
                 </div>
                 <div style={{ padding: "6px 0" }}>
                   <button onClick={() => { setSection("settings"); setShowProfile(false); }} style={{ width: "100%", textAlign: "left", padding: "9px 14px", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, color: "var(--text)", borderRadius: 8, display: "flex", alignItems: "center", gap: 8 }}>⚙️ Configurações</button>
@@ -1636,35 +1645,50 @@ function SettingsSection({ company, notify, fetchUserData, currentUser, isRestri
 
   const PLANS = [
     { id: "free", name: "Degustação", price: "R$ 0", color: "#6b7280", features: ["Grátis por 7 dias", "1 usuário", "Vagas limitadas", "Página pública"] },
-    { id: "pro", name: "Profissional", price: "R$ 49,90/mês", color: "#7c3aed", features: ["Até 30 candidatos", "5 usuários", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Preço promocional"], recommended: true, stripeUrl: "https://buy.stripe.com/test_00wfZi3PH71p7M0ate0VO00" },
-    { id: "enterprise", name: "Ilimitado", price: "R$ 149,00/mês", color: "#ec4899", features: ["Candidatos ilimitados", "Usuários ilimitados", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Suporte prioritário"], stripeUrl: "https://buy.stripe.com/test_fZu4gA2LD71p6HW9pa0VO01" },
+    { id: "pro", name: "Profissional", price: "R$ 49,90/mês", color: "#7c3aed", features: ["Até 30 candidatos", "5 usuários", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Preço Fixo"], recommended: true, stripeUrl: "https://buy.stripe.com/test_00wfZi3PH71p7M0ate0VO00", priceId: "ID_DO_PRECO_PRO" },
+    { id: "enterprise", name: "Ilimitado", price: "R$ 149,00/mês", color: "#ec4899", features: ["Candidatos ilimitados", "Usuários ilimitados", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Suporte prioritário"], stripeUrl: "https://buy.stripe.com/test_fZu4gA2LD71p6HW9pa0VO01", priceId: "ID_DO_PRECO_ILIMITADO" },
   ];
 
   const handleSubscribe = async (plan) => {
     if (plan.id === "free" || !plan.stripeUrl) return;
 
-    // Se já tiver uma assinatura ativa, enviamos para o Portal de Gerenciamento
+    // Fluxo de UPGRADE: Se já tiver uma assinatura ativa e clicar em outro plano
     if (company.subscription_status === 'active' && company.stripe_customer_id) {
-      if (!window.confirm("Você já possui um plano ativo. Deseja abrir o painel do Stripe para alterar seu plano ou cancelar?")) return;
+      if (company.subscription_plan === plan.name) {
+        notify("Você já está neste plano.", "info");
+        return;
+      }
+
+      if (!window.confirm(`Você já possui o plano ${company.subscription_plan}. Deseja ser levado à página de confirmação do plano ${plan.name} (${plan.price}) no Stripe?`)) {
+        return;
+      }
       
-      notify("Abrindo painel de gerenciamento...", "info");
+      notify("Preparando link de alteração do plano...", "info");
       try {
         const { data, error } = await supabase.functions.invoke('create-portal-session', {
           body: { 
             customerId: company.stripe_customer_id, 
-            returnUrl: window.location.href 
+            returnUrl: window.location.href,
+            newPriceId: plan.priceId // Passar o novo plano para o portal abrir na tela de confirmação
           }
         });
 
         if (error) throw error;
+        
         if (data?.url) {
           window.location.href = data.url;
         } else {
-          throw new Error("Não foi possível gerar o link do portal.");
+          throw new Error(data?.error || "Erro ao gerar link do portal.");
         }
       } catch (err) {
-        console.error("Portal Error:", err);
-        notify("Erro ao abrir portal: " + err.message, "error");
+        console.error("Upgrade Flow Error:", err);
+        notify("Erro no upgrade: " + err.message, "error");
+        
+        // Fallback: abre o portal no modo padrão
+        if (window.confirm("Não foi possível processar o atalho de alteração. Deseja abrir o portal geral do Stripe para alterar?")) {
+           supabase.functions.invoke('create-portal-session', { body: { customerId: company.stripe_customer_id, returnUrl: window.location.href } })
+             .then(({data}) => data?.url && (window.location.href = data.url));
+        }
       }
       return;
     }
@@ -1677,6 +1701,7 @@ function SettingsSection({ company, notify, fetchUserData, currentUser, isRestri
       window.location.href = checkoutUrl;
     }, 800);
   };
+
 
   return (
     <div style={{ maxWidth: 680 }}>
@@ -1721,6 +1746,18 @@ function SettingsSection({ company, notify, fetchUserData, currentUser, isRestri
 
       {tab === "plano" && (
         <div>
+          {/* PAINEL DE DIAGNÓSTICO PARA O PROPRIETÁRIO */}
+          <div style={{ padding: "12px 16px", background: "rgba(255,255,255,0.04)", borderRadius: 12, border: "1px dashed var(--border)", marginBottom: 20, fontSize: 12 }}>
+            <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+              <span><strong>Status:</strong> <span style={{ color: company.subscription_status === 'active' ? '#10b981' : '#ef4444' }}>{company.subscription_status || "Trial/Inativo"}</span></span>
+              <span><strong>Plano:</strong> {company.subscription_plan || "Degustação"}</span>
+              <span><strong>Stripe Customer:</strong> {company.stripe_customer_id ? `✅ Conectado (${company.stripe_customer_id.substring(0,8)}...)` : "❌ Não vinculado"}</span>
+            </div>
+            {!company.stripe_customer_id && company.subscription_status === 'active' && (
+              <p style={{ margin: "8px 0 0", color: "#f59e0b" }}>⚠️ O portal não abrirá porque o ID do Cliente está faltando. Faça um novo pagamento de teste para vincular.</p>
+            )}
+          </div>
+
           <p style={{ color: "var(--text2)", marginBottom: 20, fontSize: 14 }}>Sua conta está atualmente no plano: <strong style={{color: "var(--accent2)"}}>{company.subscription_plan || "Degustação"}</strong> ({company.subscription_status === 'active' ? 'Ativo' : 'Trial'})</p>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))", gap: 16 }}>
             {PLANS.map(plan => {
