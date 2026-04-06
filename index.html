@@ -1652,48 +1652,45 @@ function SettingsSection({ company, notify, fetchUserData, currentUser, isRestri
   const handleSubscribe = async (plan) => {
     if (plan.id === "free" || !plan.stripeUrl) return;
 
-    // Fluxo de UPGRADE: Se já tiver uma assinatura ativa e clicar em outro plano
-    if (company.subscription_status === 'active' && company.stripe_customer_id) {
-      if (company.subscription_plan === plan.name) {
+    // Se o cliente já tem um stripe_customer_id, ele NÃO deve ir para o Checkout novo (evita duplicidade)
+    if (company.stripe_customer_id) {
+      if (company.subscription_plan === plan.name && company.subscription_status === 'active') {
         notify("Você já está neste plano.", "info");
         return;
       }
 
-      if (!window.confirm(`Você já possui o plano ${company.subscription_plan}. Deseja ser levado à página de confirmação do plano ${plan.name} (${plan.price}) no Stripe?`)) {
+      if (!window.confirm(`Você já possui uma conta no Stripe. Deseja ser levado à página de gerenciamento/upgrade para o plano ${plan.name} (${plan.price})?`)) {
         return;
       }
       
-      notify("Preparando link de alteração do plano...", "info");
+      notify("Preparando link seguro no Stripe...", "info");
       try {
         const { data, error } = await supabase.functions.invoke('create-portal-session', {
           body: { 
             customerId: company.stripe_customer_id, 
             returnUrl: window.location.href,
-            newPriceId: plan.priceId // Passar o novo plano para o portal abrir na tela de confirmação
+            newPriceId: plan.priceId
           }
         });
 
         if (error) throw error;
-        
         if (data?.url) {
           window.location.href = data.url;
         } else {
           throw new Error(data?.error || "Erro ao gerar link do portal.");
         }
       } catch (err) {
-        console.error("Upgrade Flow Error:", err);
-        notify("Erro no upgrade: " + err.message, "error");
+        console.error("Portal Flow Error:", err);
+        notify("Erro: " + err.message, "error");
         
         // Fallback: abre o portal no modo padrão
-        if (window.confirm("Não foi possível processar o atalho de alteração. Deseja abrir o portal geral do Stripe para alterar?")) {
-           supabase.functions.invoke('create-portal-session', { body: { customerId: company.stripe_customer_id, returnUrl: window.location.href } })
-             .then(({data}) => data?.url && (window.location.href = data.url));
-        }
+        supabase.functions.invoke('create-portal-session', { body: { customerId: company.stripe_customer_id, returnUrl: window.location.href } })
+          .then(({data}) => data?.url && (window.location.href = data.url));
       }
       return;
     }
 
-    // Fluxo normal para quem ainda não é assinante
+    // Fluxo normal para QUEM NÃO TEM NADA AINDA (Checkouts Iniciais)
     notify("Redirecionando para o Checkout Seguro...", "info");
     const checkoutUrl = `${plan.stripeUrl}?client_reference_id=${company.id}&prefilled_email=${encodeURIComponent(currentUser.email)}`;
     
