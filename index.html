@@ -141,7 +141,7 @@ function App() {
     const trialDate = company?.trial_ends_at ? new Date(company.trial_ends_at) : now;
     const isTrialing = (company?.subscription_status === 'trialing' || !company?.subscription_status) && trialDate > now;
     const isActive = company?.subscription_status === 'active';
-    const isRestricted = !isActive && !isTrialing && company?.subscription_plan !== 'Ilimitado';
+    const isRestricted = !isActive && !isTrialing;
 
     setState(s => ({
       ...s,
@@ -1818,7 +1818,7 @@ function SettingsSection({ company, notify, fetchUserData, currentUser, isRestri
               <span><strong>Plano:</strong> {company.subscription_plan || "Degustação"}</span>
             </div>
             {isRestricted && (
-              <p style={{ margin: "8px 0 0", color: "#f59e0b", fontWeight: 700 }}>⚠️ Seu acesso está restrito. Por favor, assine um plano para liberar os recursos do sistema.</p>
+              <p style={{ margin: "12px 0 0", color: "#ef4444", fontWeight: 700 }}>⚠️ Conta Inativa ou Vencida: O seu sistema foi bloqueado pois o seu pagamento está pendente ou o teste expirou. Atualize um plano para liberar.</p>
             )}
           </div>
 
