@@ -141,7 +141,7 @@ function App() {
     const trialDate = company?.trial_ends_at ? new Date(company.trial_ends_at) : now;
     const isTrialing = (company?.subscription_status === 'trialing' || !company?.subscription_status) && trialDate > now;
     const isActive = company?.subscription_status === 'active';
-    const isRestricted = !isActive && !isTrialing;
+    const isRestricted = !isActive && !isTrialing && company?.subscription_plan !== 'Ilimitado';
 
     setState(s => ({
       ...s,
@@ -1822,7 +1822,7 @@ function SettingsSection({ company, notify, fetchUserData, currentUser, isRestri
             )}
           </div>
 
-          <p style={{ color: "var(--text2)", marginBottom: 20, fontSize: 14 }}>Sua conta está atualmente no plano: <strong style={{color: "var(--accent2)"}}>{company.subscription_plan || "Degustação"}</strong> ({company.subscription_status === 'active' ? 'Ativo' : 'Trial'})</p>
+          <p style={{ color: "var(--text2)", marginBottom: 20, fontSize: 14 }}>Sua conta está atualmente no plano: <strong style={{color: "var(--accent2)"}}>{company.subscription_plan || "Degustação"}</strong> ({company.subscription_status === 'active' ? 'Ativo' : (company.subscription_status === 'trialing' || !company.subscription_status) ? 'Trial' : 'Inativo'})</p>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))", gap: 16 }}>
             {PLANS.map(plan => {
               const currentPlanName = company.subscription_plan || "Degustação";
@@ -1830,7 +1830,7 @@ function SettingsSection({ company, notify, fetchUserData, currentUser, isRestri
               return (
                 <div key={plan.id} style={{ background: "var(--card)", border: `2px solid ${isCurrent ? plan.color : "var(--border)"}`, borderRadius: 16, padding: "22px 20px", position: "relative", transition: "transform 0.2s" }} className="card-hover">
                   {plan.recommended && <div style={{ position: "absolute", top: -12, left: "50%", transform: "translateX(-50%)", background: plan.color, color: "#fff", fontSize: 11, fontWeight: 700, padding: "3px 12px", borderRadius: 10, whiteSpace: "nowrap" }}>⭐ RECOMENDADO</div>}
-                  <div style={{ fontWeight: 800, fontSize: 18, color: plan.color, marginBottom: 4 }}>{plan.name}</div>
+                  <div style={{ fontWeight: 800, fontSize: 18, color: plan.color, marginBottom: 4 }}>Plano: {plan.name}</div>
                   <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 16 }}>{plan.price}</div>
                   <ul style={{ listStyle: "none", padding: 0, margin: "0 0 20px" }}>
                     {plan.features.map(f => <li key={f} style={{ fontSize: 13, color: "var(--text2)", marginBottom: 7, display: "flex", alignItems: "center", gap: 7 }}><span style={{ color: plan.color, fontWeight: 700 }}>✓</span>{f}</li>)}
