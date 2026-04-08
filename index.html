@@ -261,6 +261,33 @@ function App() {
           <button className="btn-primary" onClick={logout}>Sair da Conta</button>
         </div>
       )}
+
+      {/* Floating WhatsApp - Moderno */}
+      <a 
+        href="https://wa.me/5587992098773" 
+        target="_blank" 
+        rel="noreferrer"
+        className="card-hover"
+        style={{ 
+          position: "fixed", 
+          display: "flex", 
+          alignItems: "center", 
+          gap: 10, 
+          bottom: 30, right: 30, 
+          background: "linear-gradient(135deg, #25D366, #128C7E)", 
+          color: "#fff", 
+          padding: "12px 24px", 
+          borderRadius: 30, 
+          boxShadow: "0 8px 24px rgba(37,211,102,0.4)", 
+          textDecoration: "none", 
+          zIndex: 9999,
+          fontWeight: 700,
+          fontSize: 15
+        }}
+      >
+        <i className="fa fa-whatsapp" style={{ fontSize: 24 }}></i>
+        Suporte
+      </a>
     </div>
   );
 }
@@ -615,9 +642,6 @@ function LandingPage({ updateState, isDark, theme, login, setPublicSlug }) {
           </div>
         </div>
       </footer>
-      <a href="https://wa.me/5587992098773" style={{ position:"fixed", width:"60px", height:"60px", bottom:"40px", right:"40px", backgroundColor:"#25d366", color:"#FFF", borderRadius:"50px", textAlign:"center", fontSize:"30px", boxShadow: "1px 1px 2px #888", zIndex:1000 }} target="_blank">
-        <i style={{ marginTop:"16px" }} className="fa fa-whatsapp"></i>
-      </a>
     </div>
   );
 }
@@ -1016,6 +1040,9 @@ function DashboardHome({ stats, company, setSection, setPublicSlug }) {
       <div style={{ marginBottom: 22 }}>
         <h2 style={{ margin: "0 0 4px", fontSize: 24, fontWeight: 800 }}>Olá! 👋</h2>
         <p style={{ color: "var(--text2)", margin: 0, fontSize: 14 }}>Resumo de <strong>{company.name}</strong></p>
+        <div style={{ display: "inline-block", marginTop: 10, padding: "5px 14px", borderRadius: 20, background: "rgba(124,58,237,0.15)", color: "var(--accent2)", fontSize: 13, fontWeight: 700 }}>
+          Plano Atual: {company.subscription_plan || "Degustação"}
+        </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(148px,1fr))", gap: 12, marginBottom: 18 }}>
@@ -1798,7 +1825,8 @@ function SettingsSection({ company, notify, fetchUserData, currentUser, isRestri
           <p style={{ color: "var(--text2)", marginBottom: 20, fontSize: 14 }}>Sua conta está atualmente no plano: <strong style={{color: "var(--accent2)"}}>{company.subscription_plan || "Degustação"}</strong> ({company.subscription_status === 'active' ? 'Ativo' : 'Trial'})</p>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))", gap: 16 }}>
             {PLANS.map(plan => {
-              const isCurrent = company.subscription_plan === plan.name;
+              const currentPlanName = company.subscription_plan || "Degustação";
+              const isCurrent = currentPlanName === plan.name;
               return (
                 <div key={plan.id} style={{ background: "var(--card)", border: `2px solid ${isCurrent ? plan.color : "var(--border)"}`, borderRadius: 16, padding: "22px 20px", position: "relative", transition: "transform 0.2s" }} className="card-hover">
                   {plan.recommended && <div style={{ position: "absolute", top: -12, left: "50%", transform: "translateX(-50%)", background: plan.color, color: "#fff", fontSize: 11, fontWeight: 700, padding: "3px 12px", borderRadius: 10, whiteSpace: "nowrap" }}>⭐ RECOMENDADO</div>}
