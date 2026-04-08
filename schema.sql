@@ -22,6 +22,9 @@ CREATE TABLE public.companies (
   logo text,
   active boolean DEFAULT true,
   owner_id uuid NOT NULL, -- será referenciado a seguir
+  trial_ends_at timestamp with time zone,
+  subscription_plan text DEFAULT 'Degustação',
+  subscription_status text DEFAULT 'trialing',
   created_at timestamp with time zone DEFAULT now()
 );
 
@@ -89,16 +92,20 @@ ALTER TABLE public.candidate_notes ENABLE ROW LEVEL SECURITY;
 -- ==============================================================================
 
 -- --- COMPANIES (Empresas) ---
--- Qualquer um pode LER informações das empresas ATIVAS (para exibir a página pública)
+-- Qualquer um pode LER informações das empresas ATIVAS (para exibir a página pública) ou o SuperAdmin lê tudo
 CREATE POLICY "Public read active companies" 
   ON public.companies FOR SELECT 
-  USING (active = true);
+  USING (
+    active = true OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'SuperAdmin')
+  );
 
--- Apenas o dono ou usuários autenticados da empresa podem ATUALIZAR a empresa
+-- Apenas o dono ou usuários autenticados da empresa podem ATUALIZAR a empresa, ou o SuperAdmin
 CREATE POLICY "Users can update their company" 
   ON public.companies FOR UPDATE
   USING (
-    id IN (SELECT company_id FROM public.users WHERE id = auth.uid()) OR owner_id = auth.uid()
+    id IN (SELECT company_id FROM public.users WHERE id = auth.uid()) 
+    OR owner_id = auth.uid()
+    OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'SuperAdmin')
   );
 
 -- --- USERS (Usuários) ---

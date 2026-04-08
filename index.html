@@ -16,7 +16,6 @@
     <!-- jsPDF for PDF -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
-    <script src="https://js.stripe.com/v3/"></script>
     <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.5.0/css/font-awesome.min.css">
     <style>
       body { margin: 0; padding: 0; font-family: sans-serif; }
@@ -24,6 +23,11 @@
 </head>
 <body>
     <div id="root"></div>
+    <script>
+      window.addEventListener('error', function(event) {
+        alert("Erro Crítico Detetado: " + event.message + "\nLinha: " + event.lineno);
+      });
+    </script>
     <script type="text/babel">
 const { useState, useEffect, useRef, useCallback } = React;
 
@@ -32,10 +36,6 @@ const SUPABASE_URL = 'https://vblqbgxwmjhfqkzcpnrh.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_JkUUK7Er8mL-YCabWPeMsg_LKsSBlku';
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-const STRIPE_PK = 'pk_test_51TH6a6LDRkZ3KNvEPiQEgFm5e41JEVxf0pn4EyUQy2N9sxdLT5FDoN9vNXbw3swGMzQQpv62OYxe6O7y3mzSukqV008nAKYbfU';
-// A Secret Key NÃO deve ser colocada aqui no frontend por segurança.
-// Use Supabase Edge Functions para processar pagamentos com a Secret Key.
-const stripe = window.Stripe ? window.Stripe(STRIPE_PK) : null;
 // ────────────────────────────────────────────────────────────────────────────
 
 const STATUS_CONFIG = {
@@ -121,18 +121,7 @@ function App() {
     fetchSession();
   }, []);
 
-  // Monitorar retorno do Stripe para mensagem de sucesso
-  useEffect(() => {
-    if (window.location.hash.includes('subscribed=true')) {
-      // Pequeno delay para garantir que o Dashboard carregou
-      setTimeout(() => {
-        notify("🎉 Parabéns! Sua assinatura foi ativada com sucesso. Seja bem-vindo ao Plano Pro!", "success");
-        // Remove o parâmetro da URL para não repetir o alerta ao dar F5
-        const newHash = window.location.hash.replace(/[?&]subscribed=true/, '');
-        window.history.replaceState(null, '', window.location.pathname + window.location.search + newHash);
-      }, 1000);
-    }
-  }, [window.location.hash]);
+
 
   const fetchUserData = async (user) => {
     // Buscar perfil do banco
@@ -263,7 +252,96 @@ function App() {
       {state.view === "register-account" && <RegisterAccount state={state} updateState={updateState} isDark={isDark} notify={notify} />}
       {state.view === "register-company" && <RegisterCompany state={state} updateState={updateState} isDark={isDark} notify={notify} fetchUserData={fetchUserData} />}
       {state.view === "public-company" && <PublicCompanyPage state={state} updateState={updateState} isDark={isDark} slug={publicSlug} notify={notify} />}
-      {state.view === "dashboard" && state.currentUser && state.currentCompany && <Dashboard state={state} updateState={updateState} isDark={isDark} theme={state.theme} logout={logout} notify={notify} section={dashSection} setSection={setDashSection} fetchUserData={() => fetchUserData(state.currentUser)} setPublicSlug={setPublicSlug} />}
+      {state.view === "super-admin" && <SuperAdminPage state={state} updateState={updateState} isDark={isDark} theme={state.theme} logout={logout} notify={notify} />}
+      {state.view === "dashboard" && state.currentUser && state.currentCompany && <Dashboard state={state} updateState={updateState} isDark={isDark} theme={state.theme} logout={logout} notify={notify} section={dashSection} setSection={setDashSection} fetchUserData={() => fetchUserData(state.currentUser)} setPublicSlug={setPublicSlug} exportXLS={exportXLS} exportPDF={exportPDF} />}
+      {state.view === "dashboard" && (!state.currentUser || !state.currentCompany) && (
+        <div style={{ padding: 40, textAlign: "center", minHeight: "100vh", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
+          <h2 style={{ fontSize: 24, fontWeight: "bold" }}>Perfil ou Empresa não encontrada!</h2>
+          <p style={{ color: "var(--text2)", marginBottom: 20 }}>Tivemos um problema ao localizar sua empresa no banco de dados.</p>
+          <button className="btn-primary" onClick={logout}>Sair da Conta</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── SUPER ADMIN ────────────────────────────────────────────────────────────
+function SuperAdminPage({ state, updateState, isDark, theme, logout, notify }) {
+  const [companies, setCompanies] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchCompanies = async () => {
+      try {
+        const { data, error } = await supabase.from('companies').select('*').order('created_at', { ascending: false });
+        if (error) {
+          console.error("Erro ao puxar empresas:", error);
+          notify("Erro ao carregar empresas", "error");
+        } else if (data) {
+          setCompanies(data);
+        }
+      } catch (err) {
+        console.error("Crash no fetch", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchCompanies();
+  }, []);
+
+  const updateCompanyPlan = async (companyId, newPlan, newStatus) => {
+    const { error } = await supabase.from('companies').update({ 
+      subscription_plan: newPlan, 
+      subscription_status: newStatus 
+    }).eq('id', companyId);
+
+    if (error) {
+      notify("Erro: " + error.message, "error");
+      return;
+    }
+
+    setCompanies(c => c.map(comp => comp.id === companyId ? { ...comp, subscription_plan: newPlan, subscription_status: newStatus } : comp));
+    notify("Plano atualizado com sucesso!");
+  };
+
+  return (
+    <div style={{ padding: 40, fontFamily: "sans-serif" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 30, alignItems: "center" }}>
+        <h2 style={{ margin: 0 }}>Gerenciamento Admin Seguro</h2>
+        <button onClick={logout} style={{ padding: "10px 20px" }}>Sair do Painel</button>
+      </div>
+      
+      {loading ? (
+        <div style={{ padding: 20 }}>Carregando dados reais do super admin...</div>
+      ) : (
+        <div style={{ border: "1px solid #555", padding: 20, borderRadius: 8 }}>
+          <p>Total de empresas no banco de dados acessível: {companies.length}</p>
+          {companies.length > 0 && (
+             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 20 }}>
+               {companies.map(c => (
+                 <div key={c.id} style={{ padding: 15, border: "1px solid #444", borderRadius: 8, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+                   <div>
+                     <strong>{c.name}</strong><br/>
+                     <small>Data criação: {String(c.created_at)}</small>
+                   </div>
+                   <div style={{ display: "flex", gap: 10 }}>
+                     <select value={c.subscription_plan || "Degustação"} onChange={(e) => updateCompanyPlan(c.id, e.target.value, c.subscription_status)} style={{ padding: 5 }}>
+                        <option value="Degustação">Degustação</option>
+                        <option value="Profissional">Profissional</option>
+                        <option value="Ilimitado">Ilimitado</option>
+                     </select>
+                     <select value={c.subscription_status || "trialing"} onChange={(e) => updateCompanyPlan(c.id, c.subscription_plan, e.target.value)} style={{ padding: 5 }}>
+                        <option value="trialing">Trial / Aguardando</option>
+                        <option value="active">Ativo (Pago)</option>
+                        <option value="inactive">Inativo (Bloqueado)</option>
+                     </select>
+                   </div>
+                 </div>
+               ))}
+             </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -537,7 +615,7 @@ function LandingPage({ updateState, isDark, theme, login, setPublicSlug }) {
           </div>
         </div>
       </footer>
-      <a href="https://wa.me/qr/FSFWSHQ2IQSYB1" style={{ position:"fixed", width:"60px", height:"60px", bottom:"40px", right:"40px", backgroundColor:"#25d366", color:"#FFF", borderRadius:"50px", textAlign:"center", fontSize:"30px", boxShadow: "1px 1px 2px #888", zIndex:1000 }} target="_blank">
+      <a href="https://wa.me/5587992098773" style={{ position:"fixed", width:"60px", height:"60px", bottom:"40px", right:"40px", backgroundColor:"#25d366", color:"#FFF", borderRadius:"50px", textAlign:"center", fontSize:"30px", boxShadow: "1px 1px 2px #888", zIndex:1000 }} target="_blank">
         <i style={{ marginTop:"16px" }} className="fa fa-whatsapp"></i>
       </a>
     </div>
@@ -612,7 +690,8 @@ function RegisterCompany({ updateState, isDark, notify, fetchUserData }) {
 
     // 1. Criar empresa
     const slug = slugify(form.name);
-    const { data: company, error: cErr } = await supabase.from('companies').insert([{ name: form.name, city: form.city, slug, owner_id: user.id }]).select().single();
+    const trialEndsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: company, error: cErr } = await supabase.from('companies').insert([{ name: form.name, city: form.city, slug, owner_id: user.id, trial_ends_at: trialEndsAt }]).select().single();
     if (cErr) {
        notify("Erro ao criar empresa: " + cErr.message, "error");
        setForm(f => ({ ...f, loading: false }));
@@ -1645,57 +1724,20 @@ function SettingsSection({ company, notify, fetchUserData, currentUser, isRestri
 
   const PLANS = [
     { id: "free", name: "Degustação", price: "R$ 0", color: "#6b7280", features: ["Grátis por 7 dias", "1 usuário", "Vagas limitadas", "Página pública"] },
-    { id: "pro", name: "Profissional", price: "R$ 49,90/mês", color: "#7c3aed", features: ["Até 30 candidatos", "5 usuários", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Preço Fixo"], recommended: true, stripeUrl: "https://buy.stripe.com/test_00wfZi3PH71p7M0ate0VO00", priceId: "ID_DO_PRECO_PRO" },
-    { id: "enterprise", name: "Ilimitado", price: "R$ 149,00/mês", color: "#ec4899", features: ["Candidatos ilimitados", "Usuários ilimitados", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Suporte prioritário"], stripeUrl: "https://buy.stripe.com/test_fZu4gA2LD71p6HW9pa0VO01", priceId: "ID_DO_PRECO_ILIMITADO" },
+    { id: "pro", name: "Profissional", price: "R$ 49,90/mês", color: "#7c3aed", features: ["Até 30 candidatos", "5 usuários", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Preço Fixo"], recommended: true },
+    { id: "enterprise", name: "Ilimitado", price: "R$ 149,00/mês", color: "#ec4899", features: ["Candidatos ilimitados", "Usuários ilimitados", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Suporte prioritário"] },
   ];
 
   const handleSubscribe = async (plan) => {
-    if (plan.id === "free" || !plan.stripeUrl) return;
+    if (plan.id === "free") return;
 
-    // Se o cliente já tem um stripe_customer_id, ele NÃO deve ir para o Checkout novo (evita duplicidade)
-    if (company.stripe_customer_id) {
-      if (company.subscription_plan === plan.name && company.subscription_status === 'active') {
-        notify("Você já está neste plano.", "info");
-        return;
-      }
-
-      if (!window.confirm(`Você já possui uma conta no Stripe. Deseja ser levado à página de gerenciamento/upgrade para o plano ${plan.name} (${plan.price})?`)) {
-        return;
-      }
-      
-      notify("Preparando link seguro no Stripe...", "info");
-      try {
-        const { data, error } = await supabase.functions.invoke('create-portal-session', {
-          body: { 
-            customerId: company.stripe_customer_id, 
-            returnUrl: window.location.href,
-            newPriceId: plan.priceId
-          }
-        });
-
-        if (error) throw error;
-        if (data?.url) {
-          window.location.href = data.url;
-        } else {
-          throw new Error(data?.error || "Erro ao gerar link do portal.");
-        }
-      } catch (err) {
-        console.error("Portal Flow Error:", err);
-        notify("Erro: " + err.message, "error");
-        
-        // Fallback: abre o portal no modo padrão
-        supabase.functions.invoke('create-portal-session', { body: { customerId: company.stripe_customer_id, returnUrl: window.location.href } })
-          .then(({data}) => data?.url && (window.location.href = data.url));
-      }
-      return;
-    }
-
-    // Fluxo normal para QUEM NÃO TEM NADA AINDA (Checkouts Iniciais)
-    notify("Redirecionando para o Checkout Seguro...", "info");
-    const checkoutUrl = `${plan.stripeUrl}?client_reference_id=${company.id}&prefilled_email=${encodeURIComponent(currentUser.email)}`;
+    notify("Redirecionando para o WhatsApp do Suporte...", "info");
+    const message = `Olá! Gostaria de assinar o plano ${plan.name} (${plan.price}) do Banco de Talentos Pro para a empresa *${company.name}*.`;
+    const phone = "5587992098773"; // Número do WhatsApp
+    const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
     
     setTimeout(() => {
-      window.location.href = checkoutUrl;
+      window.open(url, '_blank');
     }, 800);
   };
 
@@ -1743,15 +1785,13 @@ function SettingsSection({ company, notify, fetchUserData, currentUser, isRestri
 
       {tab === "plano" && (
         <div>
-          {/* PAINEL DE DIAGNÓSTICO PARA O PROPRIETÁRIO */}
           <div style={{ padding: "12px 16px", background: "rgba(255,255,255,0.04)", borderRadius: 12, border: "1px dashed var(--border)", marginBottom: 20, fontSize: 12 }}>
-            <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-              <span><strong>Status:</strong> <span style={{ color: company.subscription_status === 'active' ? '#10b981' : '#ef4444' }}>{company.subscription_status || "Trial/Inativo"}</span></span>
+            <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
+              <span><strong>Status:</strong> <span style={{ color: company.subscription_status === 'active' ? '#10b981' : '#ef4444' }}>{company.subscription_status === 'active' ? 'Ativo' : company.subscription_status === 'trialing' ? 'Trial / Aguardando' : 'Inativo'}</span></span>
               <span><strong>Plano:</strong> {company.subscription_plan || "Degustação"}</span>
-              <span><strong>Stripe Customer:</strong> {company.stripe_customer_id ? `✅ Conectado (${company.stripe_customer_id.substring(0,8)}...)` : "❌ Não vinculado"}</span>
             </div>
-            {!company.stripe_customer_id && company.subscription_status === 'active' && (
-              <p style={{ margin: "8px 0 0", color: "#f59e0b" }}>⚠️ O portal não abrirá porque o ID do Cliente está faltando. Faça um novo pagamento de teste para vincular.</p>
+            {isRestricted && (
+              <p style={{ margin: "8px 0 0", color: "#f59e0b", fontWeight: 700 }}>⚠️ Seu acesso está restrito. Por favor, assine um plano para liberar os recursos do sistema.</p>
             )}
           </div>
 
@@ -1842,7 +1882,11 @@ class ErrorBoundary extends React.Component {
 }
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<ErrorBoundary><App /></ErrorBoundary>);
+root.render(
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>
+);
 
     </script>
 </body>
