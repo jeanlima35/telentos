@@ -398,8 +398,8 @@ function LandingPage({ updateState, isDark, theme, login, setPublicSlug }) {
 
   const plans = [
     { name: "Degustação", price: "Grátis", period: "por 7 dias", color: "#10b981", features: ["Acesso total por 7 dias", "1 usuário", "Página pública", "Kanban básico", "Exportação XLS"], cta: "Começar Teste" },
-    { name: "Profissional", price: "R$ 69,90", period: "/mês", color: "#7c3aed", popular: true, features: ["Até 30 candidatos", "5 usuários", "Acesso ilimitado a vagas", "Kanban completo", "Exportação XLS + PDF", "Anotações do RH", "Suporte prioritário"], cta: "Assinar Agora" },
-    { name: "Ilimitado", price: "R$ 149,00", period: "/mês", color: "#3b82f6", features: ["Candidatos ilimitados", "Usuários ilimitados", "Vagas ilimitadas", "Kanban completo", "Exportação XLS + PDF", "Anotações do RH", "Suporte prioritário"], cta: "Assinar Ilimitado" },
+    { name: "Profissional", price: "R$ 49,90", period: "/mês", color: "#7c3aed", popular: true, features: ["Até 30 candidatos", "5 usuários", "Acesso ilimitado a vagas", "Kanban completo", "Exportação XLS + PDF", "Anotações do RH", "Suporte prioritário"], cta: "Assinar Agora" },
+    { name: "Ilimitado", price: "R$ 99,90", period: "/mês", color: "#3b82f6", features: ["Candidatos ilimitados", "Usuários ilimitados", "Vagas ilimitadas", "Kanban completo", "Exportação XLS + PDF", "Anotações do RH", "Suporte prioritário"], cta: "Assinar Ilimitado" },
   ];
 
   const faqs = [
@@ -1751,8 +1751,8 @@ function SettingsSection({ company, notify, fetchUserData, currentUser, isRestri
 
   const PLANS = [
     { id: "free", name: "Degustação", price: "R$ 0", color: "#6b7280", features: ["Grátis por 7 dias", "1 usuário", "Vagas limitadas", "Página pública"] },
-    { id: "pro", name: "Profissional", price: "R$ 69,90/mês", color: "#7c3aed", features: ["Até 30 candidatos", "5 usuários", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Preço Fixo"], recommended: true },
-    { id: "enterprise", name: "Ilimitado", price: "R$ 149,00/mês", color: "#ec4899", features: ["Candidatos ilimitados", "Usuários ilimitados", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Suporte prioritário"] },
+    { id: "pro", name: "Profissional", price: "R$ 49,90/mês", color: "#7c3aed", features: ["Até 30 candidatos", "5 usuários", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Preço Fixo"], recommended: true },
+    { id: "enterprise", name: "Ilimitado", price: "R$ 99,90/mês", color: "#ec4899", features: ["Candidatos ilimitados", "Usuários ilimitados", "Vagas ilimitadas", "Exportação XLS/PDF", "Kanban Board", "Suporte prioritário"] },
   ];
 
   const handleSubscribe = async (plan) => {
